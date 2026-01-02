@@ -7,11 +7,12 @@ mod web;
 mod brute;
 mod exploit;
 mod poison;
+mod bluetooth;
 
 use clap::{Parser, Subcommand};
-use std::io::{self, Write};
 use std::process::Command;
 use std::path::Path;
+use std::io::{self, Write};
 use colored::*;
 use history::print_history;
 
@@ -49,6 +50,10 @@ struct Cli {
     /// Run LAN Poisoning on interface
     #[arg(long)]
     poison: Option<String>,
+
+    /// Run Bluetooth attacks (optional target MAC)
+    #[arg(long)]
+    bluetooth: Option<String>,
 
     /// Enable Proxychains for evasion
     #[arg(short, long, default_value_t = false)]
@@ -169,6 +174,11 @@ fn main() {
         return;
     }
 
+    if let Some(arg) = cli.bluetooth {
+        bluetooth::run_bluetooth_attacks(&arg, use_proxy);
+        return;
+    }
+
     if let Some(Commands::History) = cli.command {
         print_history();
         return;
@@ -182,6 +192,7 @@ fn main() {
         Tool::new("Credential Access (Hydra)", "hydra.sh", true, "Enter Target IP: ", false, Some(brute::run_brute_force)),
         Tool::new("LAN Poisoning (Responder)", "responder.sh", true, "Enter Interface (Leave empty to list): ", true, Some(poison::run_poisoning)),
         Tool::new("WiFi Audit (Wifite Automation)", "wifi_audit.sh", true, "Enter Wireless Interface: ", true, Some(wifi::run_wifi_audit)),
+        Tool::new("Bluetooth Arsenal (BlueZ)", "bluetooth.sh", true, "Enter Target MAC (Optional, leave empty): ", false, Some(bluetooth::run_bluetooth_attacks)),
         Tool::new("Packet Sniffer (Traffic Analysis)", "packet_sniffer.sh", true, "Enter Interface to Sniff: ", true, Some(sniffer::run_sniffer)),
     ];
 
@@ -218,7 +229,9 @@ fn main() {
                     let _ = io::stdout().flush();
                     io::stdin().read_line(&mut arg).expect("Failed to read line");
                     arg = arg.trim().to_string();
-                    if arg.is_empty() && tool.arg_prompt.contains("Leave empty") { 
+                    if arg.is_empty() && tool.arg_prompt.contains("Optional") {
+                         // Allowed empty
+                    } else if arg.is_empty() && tool.arg_prompt.contains("Leave empty") {
                          // Allowed empty
                     } else if arg.is_empty() {
                          continue;
