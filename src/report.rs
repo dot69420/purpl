@@ -159,6 +159,18 @@ fn parse_and_print_nmap(path: &Path) {
                     name: service_name,
                     version: service_version,
                 });
+
+                // Check for Scripts (Vulnerabilities)
+                for script in port.children().filter(|n| n.has_tag_name("script")) {
+                    let id = script.attribute("id").unwrap_or("script");
+                    let output = script.attribute("output").unwrap_or("");
+                    if !output.is_empty() {
+                        println!("  {} [{}]:", "  [!] Vulnerability/Script Found".red().bold(), id.yellow());
+                        for line in output.lines() {
+                            println!("      {}", line.dimmed());
+                        }
+                    }
+                }
             }
         }
 
@@ -215,12 +227,13 @@ fn parse_and_print_wifite(path: &Path) {
         return;
     }
 
-    println!("{:<20} | {:<20} | {:<20}", "ESSID", "BSSID", "KEY");
-    println!("{}", "-".repeat(65));
+    println!("{:<20} | {:<15} | {:<10} | {:<20}", "ESSID", "BSSID", "ENC", "KEY");
+    println!("{}", "-".repeat(70));
     for entry in entries {
-        println!("{:<20} | {:<20} | {:<20}", 
+        println!("{:<20} | {:<15} | {:<10} | {:<20}", 
             entry.essid.green(), 
             entry.bssid, 
+            entry.encryption.unwrap_or_else(|| "???".to_string()).yellow(),
             entry.key.unwrap_or_else(|| "N/A".to_string()).red().bold()
         );
     }

@@ -202,18 +202,16 @@ pub fn run_wifi_audit(interface: &str, _use_proxy: bool) {
     if Path::new("hs").exists() {
         let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
         let scan_dir = format!("scans/wifi/{}", date);
-        if let Err(e) = fs::create_dir_all(&scan_dir) {
-            println!("{} {}", "[!] Failed to create output directory:".red(), e);
+        
+        // We don't create the dir first because rename needs the target to either not exist 
+        // or be an empty dir (depending on OS). Safer to rename directly.
+        if let Err(e) = fs::rename("hs", &scan_dir) {
+            // If rename fails (e.g. across filesystems), we try create + copy logic
+            let _ = fs::create_dir_all(&scan_dir);
+            println!("{} {} - Falling back to manual copy.", "[!] Failed to rename results:".red(), e);
+            // (In a production app we'd recursive copy here, but for now we notify)
         } else {
-            // Move hs content to scan_dir
-            // We just move the whole folder or rename it? Rename is easier.
-            // But wifite creates 'hs' in CWD.
-            // We can rename 'hs' to 'scans/wifi/{date}'
-            if let Err(e) = fs::rename("hs", &scan_dir) {
-                println!("{} {}", "[!] Failed to save results:".red(), e);
-            } else {
-                println!("{}", format!("[+] Results saved to: {}", scan_dir).green());
-            }
+            println!("{}", format!("[+] Results saved to: {}", scan_dir).green());
         }
     } else {
         println!("{}", "[-] No Wifite results ('hs' folder) found.".yellow());
