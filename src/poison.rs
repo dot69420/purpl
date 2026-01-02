@@ -32,7 +32,7 @@ pub fn run_poisoning(interface_input: &str, _use_proxy: bool) {
 
     // 2. Check Dependency
     if Command::new("responder").arg("--help").output().is_err() {
-        println!("{}", "[-] 'responder' not found. Please install it (sudo apt install responder).".red());
+        println!("{}", "[-] 'responder' not found. Please install it (sudo pacman -S responder).".red());
         return;
     }
 

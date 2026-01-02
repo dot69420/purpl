@@ -40,7 +40,7 @@ fn find_wordlist(candidates: &[&str]) -> Option<String> {
 pub fn run_brute_force(target: &str, use_proxy: bool) {
     // 1. Validation
     if Command::new("hydra").arg("-h").output().is_err() {
-        println!("{}", "[-] 'hydra' not found. Please install it (sudo apt install hydra).".red());
+        println!("{}", "[-] 'hydra' not found. Please install it (sudo pacman -S hydra).".red());
         return;
     }
 
@@ -74,6 +74,7 @@ pub fn run_brute_force(target: &str, use_proxy: bool) {
     // 3. Resolve Wordlists
     // Common Usernames
     let user_list_path = find_wordlist(&[
+        "/usr/share/seclists/Usernames/top-usernames-shortlist.txt",
         "/usr/share/wordlists/seclists/Usernames/top-usernames-shortlist.txt",
         "/usr/share/wordlists/metasploit/unix_users.txt",
         "wordlists/users.txt"
@@ -81,6 +82,7 @@ pub fn run_brute_force(target: &str, use_proxy: bool) {
 
     // Common Passwords
     let pass_list_path = find_wordlist(&[
+        "/usr/share/seclists/Passwords/Common-Credentials/top-20-common-SSH-passwords.txt",
         "/usr/share/wordlists/seclists/Passwords/Common-Credentials/top-20-common-SSH-passwords.txt", // Good for quick spray
         "/usr/share/wordlists/metasploit/unix_passwords.txt", 
         "wordlists/passwords.txt"

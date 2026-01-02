@@ -44,20 +44,22 @@ pub fn run_web_enum(target: &str, use_proxy: bool) {
 
     // Check gobuster availability
     if Command::new("gobuster").arg("version").output().is_err() {
-        println!("{}", "[-] 'gobuster' not found. Please install it (sudo apt install gobuster).".red());
+        println!("{}", "[-] 'gobuster' not found. Please install it (sudo pacman -S gobuster).".red());
         return;
     }
 
     // 2. Resolve Wordlists
     let common_list = find_wordlist(&[
         "/usr/share/wordlists/dirb/common.txt",
+        "/usr/share/seclists/Discovery/Web-Content/common.txt",
         "/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt",
         "wordlists/common.txt" // Local fallback
     ]).unwrap_or_else(|| "manual".to_string());
 
     let medium_list = find_wordlist(&[
         "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
-        "/usr/share/wordlists/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt",
+        "/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt",
+        "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
         "wordlists/medium.txt"
     ]).unwrap_or_else(|| "manual".to_string());
 

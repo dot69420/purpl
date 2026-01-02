@@ -29,7 +29,7 @@ impl BtProfile {
 pub fn run_bluetooth_attacks(input_arg: &str, _use_proxy: bool) {
     // 1. Check Dependencies
     if Command::new("hcitool").arg("--help").output().is_err() {
-        println!("{}", "[-] 'BlueZ' tools (hcitool) not found. Please install them (sudo apt install bluez).".red());
+        println!("{}", "[-] 'BlueZ' tools (hcitool) not found. Please install them (sudo pacman -S bluez-utils).".red());
         return;
     }
 
