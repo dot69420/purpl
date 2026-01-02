@@ -4,6 +4,7 @@ mod wifi;
 mod report;
 mod sniffer;
 mod web;
+mod brute;
 
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
@@ -34,6 +35,10 @@ struct Cli {
     /// Run Web Enumeration on target URL
     #[arg(long)]
     web: Option<String>,
+
+    /// Run Brute Force on target IP
+    #[arg(long)]
+    brute: Option<String>,
 
     /// Enable Proxychains for evasion
     #[arg(short, long, default_value_t = false)]
@@ -139,6 +144,11 @@ fn main() {
         return;
     }
 
+    if let Some(target) = cli.brute {
+        brute::run_brute_force(&target, use_proxy);
+        return;
+    }
+
     if let Some(Commands::History) = cli.command {
         print_history();
         return;
@@ -148,6 +158,7 @@ fn main() {
     let tools = vec![
         Tool::new("Network Scan (Nmap Automation)", "nmap_automator.sh", true, "Enter target IP or Range: ", true, Some(nmap::run_nmap_scan)),
         Tool::new("Web Enumeration (Gobuster)", "gobuster.sh", true, "Enter Target URL (http://...): ", false, Some(web::run_web_enum)),
+        Tool::new("Credential Access (Hydra)", "hydra.sh", true, "Enter Target IP: ", false, Some(brute::run_brute_force)),
         Tool::new("WiFi Audit (Wifite Automation)", "wifi_audit.sh", true, "Enter Wireless Interface: ", true, Some(wifi::run_wifi_audit)),
         Tool::new("Packet Sniffer (Traffic Analysis)", "packet_sniffer.sh", true, "Enter Interface to Sniff: ", true, Some(sniffer::run_sniffer)),
     ];
