@@ -3,6 +3,98 @@ use std::io::{self, Write};
 use colored::*;
 use crate::history::{append_history, HistoryEntry};
 
+#[derive(Debug)]
+struct WifiProfile {
+    name: String,
+    description: String,
+    flags: Vec<String>,
+}
+
+impl WifiProfile {
+    fn new(name: &str, description: &str, flags: &[&str]) -> Self {
+        Self {
+            name: name.to_string(),
+            description: description.to_string(),
+            flags: flags.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+fn select_wifi_profile() -> WifiProfile {
+    println!("\n{}", "Select WiFi Audit Profile:".blue().bold());
+    let profiles = vec![
+        WifiProfile::new(
+            "Auto-Pwn (Default)",
+            "Standard Wifite run. Scans all networks, targets everything. (Best for general audit)",
+            &["--kill"]
+        ),
+        WifiProfile::new(
+            "WPS Only",
+            "Focus on WPS vulnerabilities (PixieDust, PIN bruteforce). Fast & Effective.",
+            &["--wps", "--kill"]
+        ),
+        WifiProfile::new(
+            "WPA Handshake Capture",
+            "Focus on capturing WPA/2 Handshakes for offline cracking.",
+            &["--wpa", "--kill"]
+        ),
+        WifiProfile::new(
+            "5GHz Only",
+            "Scan and attack only 5GHz networks (requires 5GHz capable card).",
+            &["-5", "--kill"]
+        ),
+        WifiProfile::new(
+            "Target Specific",
+            "Target a specific network by ESSID (Name).",
+            &["--kill"] // Placeholder, we will ask for ESSID
+        ),
+        WifiProfile::new(
+            "Silent/Stealth",
+            "Avoid deauth flooding where possible (Experimental).",
+            &["--no-deauths", "--kill"]
+        ),
+    ];
+
+    for (i, profile) in profiles.iter().enumerate() {
+        println!("[{}] {} - {}", i + 1, profile.name.green(), profile.description);
+    }
+
+    print!("\nChoose a profile [1-{}]: ", profiles.len());
+    let _ = io::stdout().flush();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap_or_default();
+
+    if let Ok(idx) = input.trim().parse::<usize>() {
+        if idx > 0 && idx <= profiles.len() {
+            let mut selected = profiles.into_iter().nth(idx - 1).unwrap();
+            
+            // Handle Targeted Input
+            if selected.name == "Target Specific" {
+                print!("{}", "Enter Target ESSID (Name): ".yellow());
+                let _ = io::stdout().flush();
+                let mut essid = String::new();
+                io::stdin().read_line(&mut essid).unwrap_or_default();
+                let essid = essid.trim();
+                if !essid.is_empty() {
+                    selected.flags.push("-e".to_string());
+                    selected.flags.push(essid.to_string());
+                } else {
+                    println!("{}", "[!] No ESSID provided. Reverting to default.".red());
+                }
+            }
+            
+            return selected;
+        }
+    }
+
+    println!("{}", "[!] Invalid selection. Defaulting to 'Auto-Pwn'.".yellow());
+    WifiProfile::new(
+        "Auto-Pwn (Default)",
+        "Standard Wifite run. Scans all networks, targets everything.",
+        &["--kill"]
+    )
+}
+
 pub fn run_wifi_audit(interface: &str, _use_proxy: bool) {
     let mut use_sudo = false;
     if unsafe { libc::geteuid() } != 0 {
@@ -13,7 +105,6 @@ pub fn run_wifi_audit(interface: &str, _use_proxy: bool) {
         
         if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
              use_sudo = true;
-             // Validate sudo credentials immediately
              let status = Command::new("sudo")
                 .arg("-v")
                 .stdin(Stdio::inherit())
@@ -31,7 +122,8 @@ pub fn run_wifi_audit(interface: &str, _use_proxy: bool) {
         }
     }
 
-    let run_cmd = |cmd: &str, args: &[&str]| {
+    // Helper to run commands
+    let run_cmd = |cmd: &str, args: &[&str], interactive: bool| {
         let mut final_cmd = cmd;
         let mut final_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
 
@@ -42,10 +134,7 @@ pub fn run_wifi_audit(interface: &str, _use_proxy: bool) {
         
         let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
         
-        // If sudo is used, we might need to inherit stdio for some commands if sudo -v timed out,
-        // but generally sudo -v covers us.
-        if cmd == "wifite" {
-             // Wifite needs interactive stdin/out
+        if interactive {
              let _ = Command::new(final_cmd)
                 .args(&final_args_str)
                 .stdin(Stdio::inherit())
@@ -53,7 +142,6 @@ pub fn run_wifi_audit(interface: &str, _use_proxy: bool) {
                 .stderr(Stdio::inherit())
                 .status();
         } else {
-             // Others can be silent-ish
              let _ = Command::new(final_cmd)
                 .args(&final_args_str)
                 .output();
@@ -62,41 +150,48 @@ pub fn run_wifi_audit(interface: &str, _use_proxy: bool) {
 
     println!("{}", format!("[+] Starting WiFi Audit on {}", interface).green());
 
-    // Kill interfering processes
+    // 1. Profile Selection
+    let profile = select_wifi_profile();
+    println!("{}", format!("\n[+] Selected Profile: {}", profile.name).green().bold());
+
+    // 2. Kill interfering processes
     println!("{}", "[+] Killing interfering processes...".blue());
-    run_cmd("airmon-ng", &["check", "kill"]);
+    run_cmd("airmon-ng", &["check", "kill"], false);
 
-    // Randomize MAC
+    // 3. Randomize MAC
     println!("{}", "[+] Randomizing MAC address...".blue());
-    run_cmd("ip", &["link", "set", interface, "down"]);
-    run_cmd("macchanger", &["-r", interface]);
-    run_cmd("ip", &["link", "set", interface, "up"]);
+    run_cmd("ip", &["link", "set", interface, "down"], false);
+    run_cmd("macchanger", &["-r", interface], false);
+    run_cmd("ip", &["link", "set", interface, "up"], false);
 
-    // Enable Monitor Mode
+    // 4. Enable Monitor Mode
     println!("{}", "[+] Enabling Monitor Mode...".blue());
-    run_cmd("airmon-ng", &["start", interface]);
+    run_cmd("airmon-ng", &["start", interface], false);
 
-    // Find new interface name (often wlan0mon)
+    // Find new interface name
     let iwconfig = Command::new("iwconfig").output().expect("Failed to run iwconfig");
     let output = String::from_utf8_lossy(&iwconfig.stdout);
     
-    // Simple heuristic to find monitor interface
     let mon_iface = output.lines()
         .find(|line| line.contains("Mode:Monitor"))
         .map(|line| line.split_whitespace().next().unwrap_or(interface))
-        .unwrap_or(interface); // Fallback to original if not found (some cards don't change name)
+        .unwrap_or(interface);
 
     println!("{}", format!("[+] Monitor mode enabled on: {}", mon_iface).green());
 
     println!("\n{}", "[+] Launching Wifite... (Press Ctrl+C to stop)".yellow());
     
-    // Launch Wifite
-    run_cmd("wifite", &["-i", mon_iface, "--kill"]);
+    // 5. Execute Wifite with Profile Flags
+    let mut wifite_args = vec!["-i", mon_iface];
+    let profile_flags_str: Vec<&str> = profile.flags.iter().map(|s| s.as_str()).collect();
+    wifite_args.extend(profile_flags_str);
     
-    let _ = append_history(&HistoryEntry::new("Wifite", interface, "Executed"));
+    run_cmd("wifite", &wifite_args, true);
+    
+    let _ = append_history(&HistoryEntry::new("Wifite", interface, &format!("Executed: {}", profile.name)));
 
-    // Cleanup attempt (simple)
+    // 6. Cleanup
     println!("\n{}", "[+] Cleaning up...".blue());
-    run_cmd("airmon-ng", &["stop", mon_iface]);
-    run_cmd("systemctl", &["start", "NetworkManager"]);
+    run_cmd("airmon-ng", &["stop", mon_iface], false);
+    run_cmd("systemctl", &["start", "NetworkManager"], false);
 }
