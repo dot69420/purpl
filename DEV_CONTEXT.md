@@ -64,6 +64,15 @@ To avoid "slop code", all new modules **MUST** adhere to this pattern:
     - Profiles: `Analyze` (-A), `Attack` (-I).
 - **Output:** Parse `Responder-Session.log` for captured hashes (NTLMv2).
 
+### Phase 8: Bluetooth Arsenal (`src/bluetooth.rs`)
+- **Tools:** `hciconfig`, `hcitool`, `sdptool`, `l2ping`.
+- **Logic:**
+    - **Recon:** `hcitool scan` (Classic) and `hcitool lescan` (LE).
+    - **Enum:** `sdptool browse <MAC>` to list services.
+    - **Stress:** `l2ping -f <MAC>` (Flood ping) - requires Root.
+    - **Hardware:** Auto-detect `hci0`, ensure it's UP.
+- **Output:** `scans/bluetooth/<date>/scan.txt`.
+
 ## 4. Coding Standards
 - **Error Handling:** Use `match` or `if let`. Avoid `unwrap()` on external inputs.
 - **Dependencies:** Keep lightweight. Use `std::process::Command`.

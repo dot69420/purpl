@@ -21,7 +21,9 @@ nt_test/
 │   ├── web.rs        # Web Enumeration (Gobuster)
 │   ├── exploit.rs    # Exploit Search (Searchsploit)
 │   ├── brute.rs      # Credential Access (Hydra)
+│   ├── poison.rs     # LAN Poisoning (Responder)
 │   ├── wifi.rs       # Wifite execution logic & profiles
+│   ├── bluetooth.rs  # Bluetooth Discovery & Attacks
 │   ├── sniffer.rs    # Tcpdump logic, real-time parsing, & reporting
 │   ├── report.rs     # Report parsing (XML, JSON, TXT) & display
 │   └── history.rs    # History tracking (JSON based)
@@ -29,6 +31,8 @@ nt_test/
 │   ├── <target_ip>/  # For Nmap scans
 │   ├── web/          # For Gobuster results
 │   ├── brute/        # For Hydra results
+│   ├── poison/       # For Responder logs
+│   ├── bluetooth/    # For Bluetooth scans
 │   ├── wifi/         # For Wifi audits
 │   └── packets/      # For Packet captures
 └── Cargo.toml        # Dependencies
@@ -64,14 +68,13 @@ The project relies on the following Rust crates:
     - Validates target URL scheme.
     - Automatically finds wordlists in standard Kali paths (`/usr/share/wordlists`).
     - Offers "Quick" vs "Deep" profiles based on wordlist size.
-*   **Output:** Streamed to file `scans/web/<target>/<date>/gobuster.txt`.
+*   **Output:** `scans/web/<target>/<date>/gobuster.txt`.
 
 ### Phase 3: Exploit Search (`exploit.rs`)
 *   **Tool:** `searchsploit` (Exploit-DB)
 *   **Logic:**
     - Parses previous Nmap XML reports to find `<service product="..." version="...">`.
     - Automatically queries `searchsploit` for matches.
-    - Displays relevant exploits directly in the terminal.
 *   **Output:** Terminal display of exploit titles and paths.
 
 ### Phase 4: Credential Access (`brute.rs`)
@@ -79,29 +82,40 @@ The project relies on the following Rust crates:
 *   **Logic:**
     - Supports multiple protocols (SSH, FTP, RDP).
     - Auto-detects wordlists (Seclists, Metasploit).
-    - "Quick Spray" profile for testing top credentials against a target.
 *   **Output:** `scans/brute/<target>/<date>/hydra.txt`.
 
-### Phase 5: WiFi Automation (`wifi.rs`)
+### Phase 5: LAN Poisoning (`poison.rs`)
+*   **Tool:** `responder`
+*   **Logic:**
+    - Passive (Analyze) and Active (Attack) modes.
+    - Captures NTLMv2 hashes from LLMNR/NBT-NS queries.
+*   **Output:** `scans/poison/<date>/logs/`.
+
+### Phase 6: WiFi Automation (`wifi.rs`)
 *   **Tool:** `wifite`
 *   **Logic:**
     - Automates `airmon-ng` checks and MAC randomization.
-    - **Persistence:** Moves `hs/` directory to `scans/wifi/<date>/` for permanent storage.
-    - **Profiles:** "WPS Only", "Handshake Capture", "5GHz".
+    - **Persistence:** Moves `hs/` directory to `scans/wifi/<date>/`.
+*   **Output:** `scans/wifi/<date>/cracked.json`.
 
-### Phase 6: Packet Sniffer (`sniffer.rs`)
+### Phase 7: Bluetooth Arsenal (`bluetooth.rs`)
+*   **Tools:** `BlueZ` suite (`hcitool`, `sdptool`, `l2ping`).
+*   **Logic:**
+    - Discovery (Classic/LE), Enumeration (SDP), and Stress Testing (L2Ping).
+*   **Output:** `scans/bluetooth/<date>/scan.txt`.
+
+### Phase 8: Packet Sniffer (`sniffer.rs`)
 *   **Tool:** `tcpdump`
 *   **Logic:**
     - Runs `tcpdump -l -A` to capture ASCII payload.
-    - Heuristically decodes HTTP, FTP, and DNS traffic in real-time.
-    - **Reporting:** Generates a "Beautiful Report" (`report.txt`) stored in `scans/packets/<date>/`.
+    - Heuristically decodes traffic in real-time.
+*   **Output:** `scans/packets/<date>/report.txt`.
 
-### Phase 7: Unified Reporting (`report.rs`)
+### Phase 9: Unified Reporting (`report.rs`)
 *   **Logic:** Centralized parser for all tool outputs.
     - **Nmap:** Parses XML, highlights vulnerabilities (`--script vuln`).
     - **Wifite:** Parses JSON, displays cracked keys and encryption type.
     - **Sniffer:** Displays formatted text report.
-    - **Links:** Generates research links for discovered services.
 
 ---
 
