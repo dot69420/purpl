@@ -84,7 +84,7 @@ The project relies on the following Rust crates:
     - **Monitor Mode:** Enable monitor mode on the interface.
     - **Execution:** Run `wifite` with profile flags.
     - **Cleanup:** Stop monitor mode, restart NetworkManager.
-    - **Artifacts:** Move `hs/` directory to `scans/wifi/<date>/`.
+    - **Persistence:** Automatically moves the `hs/` directory created by Wifite to a structured path `scans/wifi/<date>/` for permanent storage and discovery.
 
 ### Phase 4: Packet Sniffer (`sniffer.rs`)
 
@@ -96,7 +96,7 @@ The project relies on the following Rust crates:
     - Attempt to decode payload (HTTP, plain text credentials).
 3.  **Reporting:**
     - Write a "Beautiful Report" to `report.txt` while also updating the screen.
-    - Save raw `.pcap` if needed (optional implementation choice).
+    - Results are stored in `scans/packets/<date>/`.
 
 ### Phase 5: Unified Reporting (`report.rs`)
 
@@ -104,11 +104,12 @@ The project relies on the following Rust crates:
     - Iterate through `scans/` directory.
     - Identify scan types based on content (Nmap XML, Wifite JSON, Sniffer TXT).
 2.  **Parsing:**
-    - **Nmap:** Use `roxmltree` to extract Host, OS, and Services.
-    - **Wifite:** Use `serde_json` to parse `cracked.json`.
-    - **Sniffer:** Read `report.txt` directly.
+    - **Nmap:** Use `roxmltree` to extract Host, OS, and Services. **NEW:** Now parses `<script>` tags to identify and highlight vulnerabilities (e.g., from `--script vuln`).
+    - **Wifite:** Use `serde_json` to parse `cracked.json`. **NEW:** Displays encryption types (WEP/WPA) alongside cracked keys.
+    - **Sniffer:** Read and display the formatted `report.txt` directly.
 3.  **Display:**
     - Format the parsed data into tables using `println!` and `colored`.
+    - Provide dynamic Google exploit search links for identified service versions.
 
 ---
 
@@ -132,16 +133,12 @@ cargo build --release
 cargo run
 ```
 
-### Usage Examples
-1.  **Nmap:** Select "Network Scan", enter IP `192.168.1.1`. Choose "Stealth Scan".
-2.  **WiFi:** Select "WiFi Audit", enter `wlan0`. Choose "WPS Only".
-3.  **Report:** Select "View Scan Results", navigate to the target/date, and view the parsed output.
-
 ---
 
-## 5. Security Considerations
+## 5. Security & Safety
 
-- **Root Privileges:** The tool requests `sudo` for low-level operations. It does NOT cache credentials but relies on the system's `sudo` timeout.
+- **Root Privileges:** The tool requests `sudo` for low-level operations. It validates credentials using `sudo -v` before starting long-running tasks to prevent silent failures.
+- **Result Isolation:** Each scan is timestamped and isolated, ensuring that previous data is never overwritten and remains available for auditing.
 - **Proxychains:** The global `proxy` flag wraps commands with `proxychains` for network pivoting/anonymity. Ensure `proxychains.conf` is configured.
-- **Input Sanitization:** While Rust handles memory safety, command injection is prevented by using `Command::args` (vector of strings) rather than shell string interpolation.
+- **Input Sanitization:** Command injection is prevented by using `Command::args` (vector of strings) rather than shell string interpolation.
 
