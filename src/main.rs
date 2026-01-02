@@ -6,6 +6,7 @@ mod sniffer;
 mod web;
 mod brute;
 mod exploit;
+mod poison;
 
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
@@ -44,6 +45,10 @@ struct Cli {
     /// Run Exploit Search on target (IP or XML path)
     #[arg(long)]
     exploit: Option<String>,
+
+    /// Run LAN Poisoning on interface
+    #[arg(long)]
+    poison: Option<String>,
 
     /// Enable Proxychains for evasion
     #[arg(short, long, default_value_t = false)]
@@ -159,6 +164,11 @@ fn main() {
         return;
     }
 
+    if let Some(interface) = cli.poison {
+        poison::run_poisoning(&interface, use_proxy);
+        return;
+    }
+
     if let Some(Commands::History) = cli.command {
         print_history();
         return;
@@ -168,8 +178,9 @@ fn main() {
     let tools = vec![
         Tool::new("Network Scan (Nmap Automation)", "nmap_automator.sh", true, "Enter target IP or Range: ", true, Some(nmap::run_nmap_scan)),
         Tool::new("Web Enumeration (Gobuster)", "gobuster.sh", true, "Enter Target URL (http://...): ", false, Some(web::run_web_enum)),
-        Tool::new("Credential Access (Hydra)", "hydra.sh", true, "Enter Target IP: ", false, Some(brute::run_brute_force)),
         Tool::new("Exploit Search (Searchsploit)", "search.sh", true, "Enter Target IP (to find Nmap report): ", false, Some(exploit::run_exploit_search)),
+        Tool::new("Credential Access (Hydra)", "hydra.sh", true, "Enter Target IP: ", false, Some(brute::run_brute_force)),
+        Tool::new("LAN Poisoning (Responder)", "responder.sh", true, "Enter Interface (Leave empty to list): ", true, Some(poison::run_poisoning)),
         Tool::new("WiFi Audit (Wifite Automation)", "wifi_audit.sh", true, "Enter Wireless Interface: ", true, Some(wifi::run_wifi_audit)),
         Tool::new("Packet Sniffer (Traffic Analysis)", "packet_sniffer.sh", true, "Enter Interface to Sniff: ", true, Some(sniffer::run_sniffer)),
     ];
@@ -207,8 +218,10 @@ fn main() {
                     let _ = io::stdout().flush();
                     io::stdin().read_line(&mut arg).expect("Failed to read line");
                     arg = arg.trim().to_string();
-                    if arg.is_empty() {
-                        continue;
+                    if arg.is_empty() && tool.arg_prompt.contains("Leave empty") { 
+                         // Allowed empty
+                    } else if arg.is_empty() {
+                         continue;
                     }
                 }
                 
