@@ -2,7 +2,6 @@
 
 A powerful, interactive, and automated CLI tool for Red Teaming and Network Security auditing, written in Rust. nt_test acts as a central control proxy, orchestrating industry-standard tools like Nmap and Wifite into a streamlined, safe, and efficient workflow.
 
-Originally a Python script (lab_tool), this project has been completely rewritten in Rust for performance, reliability, and modularity.
 
 ## Key Features
 
@@ -47,3 +46,5 @@ Originally a Python script (lab_tool), this project has been completely rewritte
 ```bash
 cargo build --release
 ```
+## Roadmap
+Improve wifite implementation
