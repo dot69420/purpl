@@ -4,7 +4,7 @@ This document provides a comprehensive guide to the architecture, implementation
 
 ## 1. Core Philosophy & Architecture
 
-`nt_test` is designed as a unified command-line interface (CLI) that acts as an intelligent wrapper around industry-standard security tools (`nmap`, `wifite`, `tcpdump`).
+`nt_test` is designed as a unified command-line interface (CLI) that acts as an intelligent wrapper around industry-standard security tools (`nmap`, `wifite`, `tcpdump`, `gobuster`, `hydra`, `searchsploit`).
 
 ### Key Design Principles:
 1.  **Safety & Validation:** Never run a dangerous command without validation (e.g., sudo checks, target format validation).
@@ -18,12 +18,17 @@ nt_test/
 ├── src/
 │   ├── main.rs       # Entry point, CLI menu, and argument parsing
 │   ├── nmap.rs       # Nmap execution logic & profiles
+│   ├── web.rs        # Web Enumeration (Gobuster)
+│   ├── exploit.rs    # Exploit Search (Searchsploit)
+│   ├── brute.rs      # Credential Access (Hydra)
 │   ├── wifi.rs       # Wifite execution logic & profiles
 │   ├── sniffer.rs    # Tcpdump logic, real-time parsing, & reporting
 │   ├── report.rs     # Report parsing (XML, JSON, TXT) & display
 │   └── history.rs    # History tracking (JSON based)
 ├── scans/            # Output directory
 │   ├── <target_ip>/  # For Nmap scans
+│   ├── web/          # For Gobuster results
+│   ├── brute/        # For Hydra results
 │   ├── wifi/         # For Wifi audits
 │   └── packets/      # For Packet captures
 └── Cargo.toml        # Dependencies
@@ -47,69 +52,56 @@ The project relies on the following Rust crates:
 
 ## 3. Step-by-Step Implementation Guide
 
-### Phase 1: Foundation (CLI & History)
+### Phase 1: Foundation & Network Recon (`nmap.rs`)
+*   **Tool:** `nmap`
+*   **Profiles:** "Stealth", "Intense", "Mass Scan".
+*   **Logic:** Wraps `nmap` execution with `sudo` checks for SYN scans.
+*   **Output:** `scans/<target>/<date>/`.
 
-1.  **Project Setup:**
-    ```bash
-    cargo new nt_test
-    cd nt_test
-    # Add dependencies to Cargo.toml
-    ```
-2.  **Entry Point (`main.rs`):**
-    - Define the `Cli` struct using `clap`.
-    - Implement an interactive loop that clears the screen and prints a banner.
-    - Implement the command dispatch logic.
-3.  **History Module (`history.rs`):**
-    - Define a `HistoryEntry` struct (timestamp, mode, target, status).
-    - Implement `append_history` to read/write `scan_history.json`.
+### Phase 2: Web Enumeration (`web.rs`)
+*   **Tool:** `gobuster`
+*   **Logic:**
+    - Validates target URL scheme.
+    - Automatically finds wordlists in standard Kali paths (`/usr/share/wordlists`).
+    - Offers "Quick" vs "Deep" profiles based on wordlist size.
+*   **Output:** Streamed to file `scans/web/<target>/<date>/gobuster.txt`.
 
-### Phase 2: Nmap Integration (`nmap.rs`)
+### Phase 3: Exploit Search (`exploit.rs`)
+*   **Tool:** `searchsploit` (Exploit-DB)
+*   **Logic:**
+    - Parses previous Nmap XML reports to find `<service product="..." version="...">`.
+    - Automatically queries `searchsploit` for matches.
+    - Displays relevant exploits directly in the terminal.
+*   **Output:** Terminal display of exploit titles and paths.
 
-1.  **Profiles:** Create a `ScanProfile` struct. Define presets like "Stealth", "Intense", "Mass Scan".
-2.  **Execution:**
-    - Use `std::process::Command` to run `nmap`.
-    - Wrap execution with `sudo` checks if the profile requires root (SYN scans).
-    - Implement intelligent defaults (e.g., fallback to `-sT` if non-root).
-3.  **Output Management:**
-    - Generate path: `scans/<target>/<date>/`.
-    - Run Nmap with `-oA` to save all formats.
+### Phase 4: Credential Access (`brute.rs`)
+*   **Tool:** `hydra`
+*   **Logic:**
+    - Supports multiple protocols (SSH, FTP, RDP).
+    - Auto-detects wordlists (Seclists, Metasploit).
+    - "Quick Spray" profile for testing top credentials against a target.
+*   **Output:** `scans/brute/<target>/<date>/hydra.txt`.
 
-### Phase 3: WiFi Automation (`wifi.rs`)
+### Phase 5: WiFi Automation (`wifi.rs`)
+*   **Tool:** `wifite`
+*   **Logic:**
+    - Automates `airmon-ng` checks and MAC randomization.
+    - **Persistence:** Moves `hs/` directory to `scans/wifi/<date>/` for permanent storage.
+    - **Profiles:** "WPS Only", "Handshake Capture", "5GHz".
 
-1.  **Profiles:** Define `WifiProfile` (e.g., "WPS Only", "Handshake Capture").
-2.  **Workflow:**
-    - **Check Root:** WiFi audit requires root.
-    - **Kill Processes:** Run `airmon-ng check kill`.
-    - **Mac Changer:** Randomize MAC for anonymity.
-    - **Monitor Mode:** Enable monitor mode on the interface.
-    - **Execution:** Run `wifite` with profile flags.
-    - **Cleanup:** Stop monitor mode, restart NetworkManager.
-    - **Persistence:** Automatically moves the `hs/` directory created by Wifite to a structured path `scans/wifi/<date>/` for permanent storage and discovery.
+### Phase 6: Packet Sniffer (`sniffer.rs`)
+*   **Tool:** `tcpdump`
+*   **Logic:**
+    - Runs `tcpdump -l -A` to capture ASCII payload.
+    - Heuristically decodes HTTP, FTP, and DNS traffic in real-time.
+    - **Reporting:** Generates a "Beautiful Report" (`report.txt`) stored in `scans/packets/<date>/`.
 
-### Phase 4: Packet Sniffer (`sniffer.rs`)
-
-1.  **Real-time Processing:**
-    - Run `tcpdump -l -A` (Line buffered, ASCII).
-    - Capture `stdout` in a separate thread.
-2.  **Heuristic Parsing:**
-    - Use Regex to identify packet headers (`Time IP Src > Dst`).
-    - Attempt to decode payload (HTTP, plain text credentials).
-3.  **Reporting:**
-    - Write a "Beautiful Report" to `report.txt` while also updating the screen.
-    - Results are stored in `scans/packets/<date>/`.
-
-### Phase 5: Unified Reporting (`report.rs`)
-
-1.  **Discovery:**
-    - Iterate through `scans/` directory.
-    - Identify scan types based on content (Nmap XML, Wifite JSON, Sniffer TXT).
-2.  **Parsing:**
-    - **Nmap:** Use `roxmltree` to extract Host, OS, and Services. **NEW:** Now parses `<script>` tags to identify and highlight vulnerabilities (e.g., from `--script vuln`).
-    - **Wifite:** Use `serde_json` to parse `cracked.json`. **NEW:** Displays encryption types (WEP/WPA) alongside cracked keys.
-    - **Sniffer:** Read and display the formatted `report.txt` directly.
-3.  **Display:**
-    - Format the parsed data into tables using `println!` and `colored`.
-    - Provide dynamic Google exploit search links for identified service versions.
+### Phase 7: Unified Reporting (`report.rs`)
+*   **Logic:** Centralized parser for all tool outputs.
+    - **Nmap:** Parses XML, highlights vulnerabilities (`--script vuln`).
+    - **Wifite:** Parses JSON, displays cracked keys and encryption type.
+    - **Sniffer:** Displays formatted text report.
+    - **Links:** Generates research links for discovered services.
 
 ---
 
@@ -117,7 +109,7 @@ The project relies on the following Rust crates:
 
 ### Prerequisites
 - **Rust Toolchain:** `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-- **External Tools:** `nmap`, `wifite`, `tcpdump`, `airmon-ng`, `macchanger`.
+- **External Tools:** `nmap`, `wifite`, `tcpdump`, `gobuster`, `hydra`, `searchsploit`, `airmon-ng`, `macchanger`.
 
 ### Build
 ```bash
@@ -128,17 +120,13 @@ cargo build --release
 ```bash
 # Run from target directory
 ./target/release/nt_test
-
-# Or via cargo
-cargo run
 ```
 
 ---
 
 ## 5. Security & Safety
 
-- **Root Privileges:** The tool requests `sudo` for low-level operations. It validates credentials using `sudo -v` before starting long-running tasks to prevent silent failures.
-- **Result Isolation:** Each scan is timestamped and isolated, ensuring that previous data is never overwritten and remains available for auditing.
-- **Proxychains:** The global `proxy` flag wraps commands with `proxychains` for network pivoting/anonymity. Ensure `proxychains.conf` is configured.
-- **Input Sanitization:** Command injection is prevented by using `Command::args` (vector of strings) rather than shell string interpolation.
-
+- **Root Privileges:** The tool requests `sudo` for low-level operations. It validates credentials using `sudo -v` before starting long-running tasks.
+- **Result Isolation:** Each scan is timestamped and isolated.
+- **Proxychains:** The global `proxy` flag wraps commands with `proxychains` for network pivoting.
+- **Input Sanitization:** Command injection is prevented by using `Command::args`.
