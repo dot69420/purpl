@@ -21,7 +21,6 @@ pub struct HostInfo {
     pub services: Vec<ServiceInfo>,
 }
 
-// Wifite cracked.json structure (approximate)
 #[derive(Deserialize, Debug)]
 struct WifiteEntry {
     bssid: String,
@@ -30,52 +29,65 @@ struct WifiteEntry {
     encryption: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 struct WifiteReport {
-    // Wifite often outputs a list of objects or a dict. 
-    // We'll try to parse a list of entries.
-    // If wifite structure is different, we might need to adjust.
-    // For now, let's assume standard JSON array of objects if we can find documentation or valid output.
-    // Actually, wifite usually produces a 'cracked.json' which is a list.
+    // Placeholder
 }
 
 pub fn display_scan_report(scan_dir: &Path) {
     println!("{}", format!("\n--- Report for: {} ---", scan_dir.display()).blue().bold());
+    let mut any_report_found = false;
 
     // 1. Look for Nmap XML files
-    let mut nmap_found = false;
     if let Ok(entries) = fs::read_dir(scan_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(ext) = path.extension() {
                 if ext == "xml" {
                     parse_and_print_nmap(&path);
-                    nmap_found = true;
+                    any_report_found = true;
                 }
             }
         }
     }
 
-    if !nmap_found {
-        println!("{}", "No Nmap XML report found in this directory.".yellow());
-    }
+    // 2. Look for Wifite cracked.json
+    // Check local 'cracked.json' (if moved correctly)
+    let wifite_path = scan_dir.join("hs/cracked.json"); // wifite usually puts it in hs/ inside the dir if we moved the whole hs folder
+    let wifite_path_root = scan_dir.join("cracked.json"); // or just at root
 
-    // 2. Look for Wifite cracked.json (usually in hs/ or root of scan dir if moved)
-    // Note: Wifite saves to 'hs/cracked.json' usually relative to where it ran.
-    // Since we run wifite in the tool, we might need to track where it puts files.
-    // For now, let's check if 'hs/cracked.json' exists in the current directory or the scan dir.
-    
-    // Check specific known locations for wifite logs if mapped to this scan
-    let wifite_path = scan_dir.join("cracked.json");
     if wifite_path.exists() {
         parse_and_print_wifite(&wifite_path);
-    } else {
-        // Fallback: check global 'hs/cracked.json' just in case user ran it recently
-        let global_wifite = Path::new("hs/cracked.json");
-        if global_wifite.exists() {
-             println!("\n{}", "Found global Wifite cracked.json (might be unrelated to this specific scan dir):".yellow());
-             parse_and_print_wifite(global_wifite);
-        }
+        any_report_found = true;
+    } else if wifite_path_root.exists() {
+        parse_and_print_wifite(&wifite_path_root);
+        any_report_found = true;
+    }
+
+    // 3. Look for Sniffer Report (report.txt)
+    let sniffer_report = scan_dir.join("report.txt");
+    if sniffer_report.exists() {
+        parse_and_print_sniffer(&sniffer_report);
+        any_report_found = true;
+    }
+
+    if !any_report_found {
+        println!("{}", "No recognized report files (Nmap XML, Wifite JSON, Sniffer TXT) found in this directory.".yellow());
+    }
+}
+
+fn parse_and_print_sniffer(path: &Path) {
+    println!("{}", format!("\nReading Packet Sniffer Report: {}", path.file_name().unwrap().to_string_lossy()).magenta());
+    println!("{}", "-".repeat(60));
+    
+    match fs::read_to_string(path) {
+        Ok(content) => {
+            // Just print the content as it's already formatted by the sniffer tool
+            // We might want to page it if it's huge, but for now direct print.
+            println!("{}", content);
+        },
+        Err(e) => println!("{} {}", "[!] Failed to read report file:".red(), e),
     }
 }
 

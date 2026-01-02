@@ -1,5 +1,8 @@
 use std::process::{Command, Stdio};
 use std::io::{self, Write};
+use std::fs;
+use std::path::Path;
+use chrono::Local;
 use colored::*;
 use crate::history::{append_history, HistoryEntry};
 
@@ -190,8 +193,29 @@ pub fn run_wifi_audit(interface: &str, _use_proxy: bool) {
     
     let _ = append_history(&HistoryEntry::new("Wifite", interface, &format!("Executed: {}", profile.name)));
 
-    // 6. Cleanup
+    // 6. Cleanup & Save Results
     println!("\n{}", "[+] Cleaning up...".blue());
     run_cmd("airmon-ng", &["stop", mon_iface], false);
     run_cmd("systemctl", &["start", "NetworkManager"], false);
+
+    // Move Results
+    if Path::new("hs").exists() {
+        let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
+        let scan_dir = format!("scans/wifi/{}", date);
+        if let Err(e) = fs::create_dir_all(&scan_dir) {
+            println!("{} {}", "[!] Failed to create output directory:".red(), e);
+        } else {
+            // Move hs content to scan_dir
+            // We just move the whole folder or rename it? Rename is easier.
+            // But wifite creates 'hs' in CWD.
+            // We can rename 'hs' to 'scans/wifi/{date}'
+            if let Err(e) = fs::rename("hs", &scan_dir) {
+                println!("{} {}", "[!] Failed to save results:".red(), e);
+            } else {
+                println!("{}", format!("[+] Results saved to: {}", scan_dir).green());
+            }
+        }
+    } else {
+        println!("{}", "[-] No Wifite results ('hs' folder) found.".yellow());
+    }
 }
