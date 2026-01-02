@@ -2,6 +2,7 @@ mod history;
 mod nmap;
 mod wifi;
 mod report;
+mod sniffer;
 
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
@@ -24,6 +25,10 @@ struct Cli {
     /// Run WiFi Audit on interface
     #[arg(short, long)]
     wifite: Option<String>,
+
+    /// Run Packet Sniffer on interface
+    #[arg(short, long)]
+    sniff: Option<String>,
 
     /// Enable Proxychains for evasion
     #[arg(short, long, default_value_t = false)]
@@ -119,6 +124,11 @@ fn main() {
         return;
     }
 
+    if let Some(interface) = cli.sniff {
+        sniffer::run_sniffer(&interface, use_proxy);
+        return;
+    }
+
     if let Some(Commands::History) = cli.command {
         print_history();
         return;
@@ -128,7 +138,7 @@ fn main() {
     let tools = vec![
         Tool::new("Network Scan (Nmap Automation)", "nmap_automator.sh", true, "Enter target IP or Range: ", true, Some(nmap::run_nmap_scan)),
         Tool::new("WiFi Audit (Wifite Automation)", "wifi_audit.sh", true, "Enter Wireless Interface: ", true, Some(wifi::run_wifi_audit)),
-        Tool::new("Packet Sniffer (Tcpdump)", "packet_sniffer.sh", true, "Enter Interface to Sniff: ", true, None), // Still uses script
+        Tool::new("Packet Sniffer (Traffic Analysis)", "packet_sniffer.sh", true, "Enter Interface to Sniff: ", true, Some(sniffer::run_sniffer)),
     ];
 
     loop {
