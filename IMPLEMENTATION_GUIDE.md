@@ -103,6 +103,14 @@ The project relies on the following Rust crates:
     - **Sniffer:** Displays formatted text report.
     - **Links:** Generates research links for discovered services.
 
+### Phase 8: Bluetooth Arsenal (`bluetooth.rs`)
+*   **Tools:** `BlueZ` suite (`hcitool`, `sdptool`, `l2ping`).
+*   **Logic:**
+    - **Discovery:** Scans for visible (Classic) and Low Energy (LE) devices.
+    - **Enumeration:** Queries SDP to identify device types (Audio, Phone, Peripheral).
+    - **Offensive:** Implements L2CAP ping flooding for stress testing.
+    - **Persistence:** Saves scan results to `scans/bluetooth/<date>/`.
+
 ---
 
 ## 4. Building & Running
