@@ -1,22 +1,22 @@
-use std::process::{Command, Stdio};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::fs::{self, File};
-use std::thread;
 use chrono::Local;
 use colored::*;
 use regex::Regex;
 use crate::history::{append_history, HistoryEntry};
+use crate::executor::CommandExecutor;
+use crate::io_handler::IoHandler;
 
 #[derive(Debug, Clone)]
-struct SniffProfile {
-    name: String,
-    description: String,
-    filter: String, // tcpdump filter syntax
-    args: Vec<&'static str>,
+pub struct SniffProfile {
+    pub name: String,
+    pub description: String,
+    pub filter: String, // tcpdump filter syntax
+    pub args: Vec<&'static str>,
 }
 
 impl SniffProfile {
-    fn new(name: &str, description: &str, filter: &str, args: &[&'static str]) -> Self {
+    pub fn new(name: &str, description: &str, filter: &str, args: &[&'static str]) -> Self {
         Self {
             name: name.to_string(),
             description: description.to_string(),
@@ -35,10 +35,10 @@ struct PacketSummary {
     payload_preview: String,
 }
 
-pub fn run_sniffer(interface: &str, _use_proxy: bool) {
+pub fn run_sniffer(interface: &str, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     // 1. Check Root
-    if unsafe { libc::geteuid() } != 0 {
-        println!("{}", "[!] Packet sniffing requires ROOT privileges.".red());
+    if !executor.is_root() {
+        io.println(&format!("{}", "[!] Packet sniffing requires ROOT privileges.".red()));
         return;
     }
 
@@ -70,15 +70,14 @@ pub fn run_sniffer(interface: &str, _use_proxy: bool) {
         ),
     ];
 
-    println!("\n{}", "Select Sniffer Profile:".blue().bold());
+    io.println(&format!("\n{}", "Select Sniffer Profile:".blue().bold()));
     for (i, profile) in profiles.iter().enumerate() {
-        println!("[{}] {} - {}", i + 1, profile.name.green(), profile.description);
+        io.println(&format!("[{}] {} - {}", i + 1, profile.name.green(), profile.description));
     }
 
-    print!("\nChoose a profile [1-{}]: ", profiles.len());
-    let _ = io::stdout().flush();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap_or_default();
+    io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
+    io.flush();
+    let input = io.read_line();
 
     let profile = if let Ok(idx) = input.trim().parse::<usize>() {
         if idx > 0 && idx <= profiles.len() {
@@ -98,71 +97,65 @@ pub fn run_sniffer(interface: &str, _use_proxy: bool) {
     let pcap_file = format!("{}/capture.pcap", output_dir);
     let report_file = format!("{}/report.txt", output_dir);
 
-    println!("{}", format!("\n[+] Starting {} on {}", profile.name, interface).green());
-    println!("    Filter: {}", if profile.filter.is_empty() { "None (All)" } else { &profile.filter });
-    println!("[+] Saving PCAP to: {}", pcap_file);
-    println!("[+] Live parsing... Press Ctrl+C to stop.");
+    io.println(&format!("{}", format!("\n[+] Starting {} on {}", profile.name, interface).green()));
+    io.println(&format!("    Filter: {}", if profile.filter.is_empty() { "None (All)" } else { &profile.filter }));
+    io.println(&format!("[+] Saving PCAP to: {}", pcap_file));
+    io.println("[+] Live parsing... Press Ctrl+C to stop.");
 
     // 4. Start TCPDump
-    let mut args = profile.args.clone();
-    args.push("-i");
-    args.push(interface);
-    args.push("-l"); // Line buffered
+    let (tcpdump_cmd, tcpdump_args) = build_sniffer_command("tcpdump", interface, &profile.args, &profile.filter);
 
-    if !profile.filter.is_empty() {
-        args.push(&profile.filter);
-    }
+    let args_str: Vec<&str> = tcpdump_args.iter().map(|s| s.as_str()).collect();
 
-    let mut cmd = Command::new("tcpdump")
-        .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped()) // tcpdump often prints verbose info to stderr
-        .spawn()
-        .expect("Failed to start tcpdump");
+    // The executor trait execute_output doesn't support streaming/spawning easily with the current simple definition.
+    // However, for coverage, we can use execute_output which captures everything.
+    // For real usage, we want streaming.
+    // I should probably extend the trait or just use execute_output for simplicity in this refactor,
+    // accepting we might lose live streaming in the "ShellExecutor" unless I implement `spawn`.
 
-    let stdout = cmd.stdout.take().expect("Failed to capture stdout");
-    let reader = BufReader::new(stdout);
+    // BUT, the current implementation uses `spawn` and reads stdout.
+    // `execute_output` waits.
+    // If I switch to `execute_output`, the tool will hang until Ctrl+C (which might not propagate).
+
+    // Live parsing using spawn_stdout
+    let reader = executor.spawn_stdout(&tcpdump_cmd, &args_str).expect("Failed to run tcpdump");
 
     let report_path = report_file.clone();
     
     // We need a thread to read output and process it
-    let handle = thread::spawn(move || {
-        let mut file = File::create(report_path).expect("Failed to create report file");
-        
-        let mut current_packet = String::new();
-        
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                // Heuristic Parsing
-                if l.contains(" IP ") {
-                    // New packet start
-                    if !current_packet.is_empty() {
-                         process_packet_block(&current_packet, &mut file);
-                         current_packet.clear();
-                    }
-                    current_packet.push_str(&l);
-                    current_packet.push('\n');
-                } else {
-                    // Payload or continuation
-                    current_packet.push_str(&l);
-                    current_packet.push('\n');
+    // In blocking mode (refactored), we just process it.
+    let mut file = File::create(report_path).expect("Failed to create report file");
+
+    let mut current_packet = String::new();
+
+    for line in reader.lines() {
+        if let Ok(l) = line {
+            // Heuristic Parsing
+            if l.contains(" IP ") {
+                // New packet start
+                if !current_packet.is_empty() {
+                     process_packet_block(&current_packet, &mut file, io);
+                     current_packet.clear();
                 }
+                current_packet.push_str(&l);
+                current_packet.push('\n');
+            } else {
+                // Payload or continuation
+                current_packet.push_str(&l);
+                current_packet.push('\n');
             }
         }
-        // Process last
-        if !current_packet.is_empty() {
-             process_packet_block(&current_packet, &mut file);
-        }
-    });
+    }
+    // Process last
+    if !current_packet.is_empty() {
+         process_packet_block(&current_packet, &mut file, io);
+    }
     
-    println!("{}", "Press Ctrl+C to stop capturing...".yellow());
-    let _ = cmd.wait(); 
-    
-    let _ = handle.join();
+    io.println(&format!("{}", "Capture finished.".yellow()));
     let _ = append_history(&HistoryEntry::new("Sniffer", interface, &format!("Profile: {}", profile.name)));
 }
 
-fn process_packet_block(block: &str, file: &mut File) {
+fn process_packet_block(block: &str, file: &mut File, io: &dyn IoHandler) {
     let re_header = Regex::new(r"(\d{2}:\d{2}:\d{2}\.\d+)\sIP\s([\w\.-]+)\s>\s([\w\.-]+):\s(.*)").unwrap();
     
     let lines: Vec<&str> = block.lines().collect();
@@ -184,11 +177,11 @@ fn process_packet_block(block: &str, file: &mut File) {
         let clean_payload = extract_readable(&payload);
 
         // Print to Screen (Beautifully)
-        println!("{}", "-".repeat(50).dimmed());
-        println!("{} {} -> {}", time.blue(), src.green(), dst.red());
-        println!("Type: {}", content_type.yellow().bold());
+        io.println(&format!("{}", "-".repeat(50).dimmed()));
+        io.println(&format!("{} {} -> {}", time.blue(), src.green(), dst.red()));
+        io.println(&format!("Type: {}", content_type.yellow().bold()));
         if !clean_payload.is_empty() {
-            println!("Content:\n{}", clean_payload.white());
+            io.println(&format!("Content:\n{}", clean_payload.white()));
         }
 
         // Write to Report
@@ -234,3 +227,25 @@ fn extract_readable(payload: &str) -> String {
     }
     clean
 }
+
+pub fn build_sniffer_command(
+    base_cmd: &str,
+    interface: &str,
+    args: &[&str],
+    filter: &str
+) -> (String, Vec<String>) {
+    let mut final_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    final_args.push("-i".to_string());
+    final_args.push(interface.to_string());
+    final_args.push("-l".to_string());
+
+    if !filter.is_empty() {
+        final_args.push(filter.to_string());
+    }
+
+    (base_cmd.to_string(), final_args)
+}
+
+#[cfg(test)]
+#[path = "sniffer_tests.rs"]
+mod tests;

@@ -1,18 +1,19 @@
 use std::fs;
-use std::process::{Command, Stdio};
-use std::io::{self, Write};
+use std::io::Write;
 use chrono::Local;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use colored::*;
 use crate::history::{append_history, HistoryEntry};
+use crate::executor::CommandExecutor;
+use crate::io_handler::IoHandler;
 
 #[derive(Debug)]
-struct ScanProfile {
-    name: String,
-    description: String,
-    flags: Vec<&'static str>,
-    requires_root: bool,
+pub struct ScanProfile {
+    pub name: String,
+    pub description: String,
+    pub flags: Vec<&'static str>,
+    pub requires_root: bool,
 }
 
 impl ScanProfile {
@@ -26,10 +27,10 @@ impl ScanProfile {
     }
 }
 
-fn select_scan_profile(is_large_network: bool) -> ScanProfile {
+fn select_scan_profile(is_large_network: bool, io: &dyn IoHandler) -> ScanProfile {
     if is_large_network {
-         println!("\n{}", "[!] Large Network Detected (Class A /8)".yellow().bold());
-         println!("Auto-selecting 'Mass Scan' profile to prevent timeout/hanging.");
+         io.println(&format!("\n{}", "[!] Large Network Detected (Class A /8)".yellow().bold()));
+         io.println("Auto-selecting 'Mass Scan' profile to prevent timeout/hanging.");
          return ScanProfile::new(
              "Mass Scan",
              "Optimized for large networks (No DNS, aggressive timing, rate limited)",
@@ -38,7 +39,7 @@ fn select_scan_profile(is_large_network: bool) -> ScanProfile {
          );
     }
 
-    println!("\n{}", "Select Scan Profile:".blue().bold());
+    io.println(&format!("\n{}", "Select Scan Profile:".blue().bold()));
     let profiles = vec![
         ScanProfile::new(
             "Stealth & Vuln",
@@ -73,13 +74,12 @@ fn select_scan_profile(is_large_network: bool) -> ScanProfile {
     ];
 
     for (i, profile) in profiles.iter().enumerate() {
-        println!("[{}] {} - {}", i + 1, profile.name.green(), profile.description);
+        io.println(&format!("[{}] {} - {}", i + 1, profile.name.green(), profile.description));
     }
 
-    print!("\nChoose a profile [1-{}]: ", profiles.len());
-    let _ = io::stdout().flush();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap_or_default();
+    io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
+    io.flush();
+    let input = io.read_line();
 
     if let Ok(idx) = input.trim().parse::<usize>() {
         if idx > 0 && idx <= profiles.len() {
@@ -88,7 +88,7 @@ fn select_scan_profile(is_large_network: bool) -> ScanProfile {
         }
     }
 
-    println!("{}", "[!] Invalid selection. Defaulting to 'Stealth & Vuln'.".yellow());
+    io.println(&format!("{}", "[!] Invalid selection. Defaulting to 'Stealth & Vuln'.".yellow()));
     ScanProfile::new(
         "Stealth & Vuln",
         "Default. TCP SYN scan + Service/OS detection + Vulnerability scripts. (Balanced)",
@@ -97,44 +97,38 @@ fn select_scan_profile(is_large_network: bool) -> ScanProfile {
     )
 }
 
-pub fn run_nmap_scan(target: &str, use_proxy: bool) {
-    let is_root = unsafe { libc::geteuid() } == 0;
+pub fn run_nmap_scan(target: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+    let is_root = executor.is_root();
 
     if use_proxy {
-        println!("{}", "[*] Proxychains Enabled. Traffic will be routed through configured proxies.".magenta().bold());
+        io.println(&format!("{}", "[*] Proxychains Enabled. Traffic will be routed through configured proxies.".magenta().bold()));
     }
 
     if target.ends_with("/8") {
-        println!("{}", "[!] Warning: Class A scan detected.".yellow());
+        io.println(&format!("{}", "[!] Warning: Class A scan detected.".yellow()));
     }
 
     // Select Profile
     let is_large_network = target.ends_with("/8");
-    let mut profile = select_scan_profile(is_large_network);
+    let mut profile = select_scan_profile(is_large_network, io);
     let mut use_sudo = false;
 
     if profile.requires_root && !is_root {
-        print!("\n{} {} [Y/n]: ", "[!]".red(), "This profile requires ROOT privileges. Attempt to elevate with sudo?".yellow().bold());
-        io::stdout().flush().unwrap();
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap_or_default();
+        io.print(&format!("\n{} {} [Y/n]: ", "[!]".red(), "This profile requires ROOT privileges. Attempt to elevate with sudo?".yellow().bold()));
+        io.flush();
+        let input = io.read_line();
         
         if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
              use_sudo = true;
              // Validate sudo credentials immediately so subsequent commands don't hang/fail hiddenly
-             let status = Command::new("sudo")
-                .arg("-v")
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status();
+             let status = executor.execute("sudo", &["-v"]);
             
              if status.is_err() || !status.unwrap().success() {
-                 println!("{}", "[-] Sudo authentication failed. Aborting.".red());
+                 io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
                  return;
              }
         } else {
-             println!("{}", "    - Switching to 'Connect Scan' (-sT) automatically.".yellow());
+             io.println(&format!("{}", "    - Switching to 'Connect Scan' (-sT) automatically.".yellow()));
              profile = ScanProfile::new(
                 "Connect Scan (Fallback)",
                 "Non-root fallback. Uses full TCP handshake.",
@@ -144,23 +138,23 @@ pub fn run_nmap_scan(target: &str, use_proxy: bool) {
         }
     }
     
-    println!("{}", format!("\n[+] Selected Profile: {}", profile.name).green().bold());
-    println!("    {}", profile.description);
+    io.println(&format!("{}", format!("\n[+] Selected Profile: {}", profile.name).green().bold()));
+    io.println(&format!("    {}", profile.description));
 
     let safe_target = target.replace('/', "_");
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let output_dir = format!("scans/{}/{}", safe_target, date);
 
     if let Err(e) = fs::create_dir_all(&output_dir) {
-        println!("{} {}", "[!] Failed to create output directory:".red(), e);
+        io.println(&format!("{} {}", "[!] Failed to create output directory:".red(), e));
         return;
     }
 
-    println!("{}", format!("[+] Starting Scan for {}", target).green());
-    println!("[+] Results will be saved to {}", output_dir);
+    io.println(&format!("{}", format!("[+] Starting Scan for {}", target).green()));
+    io.println(&format!("[+] Results will be saved to {}", output_dir));
 
     // Step 1: Host Discovery
-    println!("\n{}", "[1] Running Host Discovery...".blue().bold());
+    io.println(&format!("\n{}", "[1] Running Host Discovery...".blue().bold()));
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(ProgressStyle::default_spinner().template("{spinner:.green} {msg}").unwrap());
     spinner.set_message("Discovering hosts...");
@@ -208,22 +202,20 @@ pub fn run_nmap_scan(target: &str, use_proxy: bool) {
     // Convert Vec<String> to Vec<&str> for Command::args
     let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
-    let output = Command::new(final_cmd)
-        .args(&final_args_str)
-        .output();
+    let output = executor.execute_output(final_cmd, &final_args_str);
 
     spinner.finish_and_clear();
 
     match output {
         Ok(out) => {
             if !out.status.success() {
-                println!("{}", "[!] Host discovery failed.".red());
+                io.println(&format!("{}", "[!] Host discovery failed.".red()));
                 let _ = append_history(&HistoryEntry::new("Nmap", target, "Failed"));
                 return;
             }
         }
         Err(e) => {
-            println!("{} {}", "[!] Failed to execute nmap:".red(), e);
+            io.println(&format!("{} {}", "[!] Failed to execute nmap:".red(), e));
             let _ = append_history(&HistoryEntry::new("Nmap", target, "Failed"));
             return;
         }
@@ -237,15 +229,15 @@ pub fn run_nmap_scan(target: &str, use_proxy: bool) {
         .collect();
 
     if alive_hosts.is_empty() {
-        println!("{}", "[-] No alive hosts found.".yellow());
+        io.println(&format!("{}", "[-] No alive hosts found.".yellow()));
         let _ = append_history(&HistoryEntry::new("Nmap", target, "No Hosts"));
         return;
     }
 
-    println!("{}", format!("[+] Found {} alive hosts.", alive_hosts.len()).green());
+    io.println(&format!("{}", format!("[+] Found {} alive hosts.", alive_hosts.len()).green()));
 
     // Step 2: Deep Scan
-    println!("\n{}", "[2] Starting Deep Scans...".blue().bold());
+    io.println(&format!("\n{}", "[2] Starting Deep Scans...".blue().bold()));
     
     let bar = ProgressBar::new(alive_hosts.len() as u64);
     bar.set_style(ProgressStyle::default_bar()
@@ -257,37 +249,50 @@ pub fn run_nmap_scan(target: &str, use_proxy: bool) {
         bar.set_message(format!("Scanning {}", host));
         
         let scan_file = format!("{}/scan_{}", output_dir, host);
-        let mut scan_args = profile.flags.clone(); // Use the selected profile flags
-        scan_args.push(host);
-        scan_args.push("-oA");
-        scan_args.push(&scan_file);
-
-        // Command Construction: [sudo] [proxychains] nmap [args]
-        let mut final_cmd = "nmap";
-        let mut final_args: Vec<String> = scan_args.iter().map(|s| s.to_string()).collect();
-
-        if use_proxy {
-            final_args.insert(0, "nmap".to_string());
-            final_cmd = "proxychains";
-        }
-
-        if use_sudo {
-            final_args.insert(0, final_cmd.to_string());
-            final_cmd = "sudo";
-        }
-        
+        let (final_cmd, final_args) = build_nmap_command("nmap", &profile.flags, host, &scan_file, use_proxy, use_sudo);
         let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
-        let _ = Command::new(final_cmd)
-            .args(&final_args_str)
-            .stdout(Stdio::null()) // Suppress nmap output to keep progress bar clean
-            .stderr(Stdio::null())
-            .status();
+        let _ = executor.execute_silent(&final_cmd, &final_args_str);
         
         bar.inc(1);
     }
 
     bar.finish_with_message("All scans complete!");
-    println!("{}", format!("\n[+] Scan completed. Results in {}", output_dir).green());
+    io.println(&format!("{}", format!("\n[+] Scan completed. Results in {}", output_dir).green()));
     let _ = append_history(&HistoryEntry::new("Nmap", target, "Success"));
 }
+
+pub fn build_nmap_command(
+    base_cmd: &str,
+    flags: &[&str],
+    target: &str,
+    output_file: &str,
+    use_proxy: bool,
+    use_sudo: bool
+) -> (String, Vec<String>) {
+    let mut scan_args: Vec<String> = flags.iter().map(|s| s.to_string()).collect();
+    scan_args.push(target.to_string());
+    if !output_file.is_empty() {
+        scan_args.push("-oA".to_string());
+        scan_args.push(output_file.to_string());
+    }
+
+    let mut final_cmd = base_cmd.to_string();
+    let mut final_args = scan_args;
+
+    if use_proxy {
+        final_args.insert(0, final_cmd);
+        final_cmd = "proxychains".to_string();
+    }
+
+    if use_sudo {
+        final_args.insert(0, final_cmd);
+        final_cmd = "sudo".to_string();
+    }
+
+    (final_cmd, final_args)
+}
+
+#[cfg(test)]
+#[path = "nmap_tests.rs"]
+mod tests;

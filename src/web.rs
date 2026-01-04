@@ -1,21 +1,22 @@
-use std::process::{Command, Stdio};
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::Path;
 use std::fs;
 use chrono::Local;
 use colored::*;
 use crate::history::{append_history, HistoryEntry};
+use crate::executor::CommandExecutor;
+use crate::io_handler::IoHandler;
 
 #[derive(Debug, Clone)]
-struct WebProfile {
-    name: String,
-    description: String,
-    wordlist: String,
-    flags: Vec<&'static str>,
+pub struct WebProfile {
+    pub name: String,
+    pub description: String,
+    pub wordlist: String,
+    pub flags: Vec<&'static str>,
 }
 
 impl WebProfile {
-    fn new(name: &str, description: &str, wordlist: &str, flags: &[&'static str]) -> Self {
+    pub fn new(name: &str, description: &str, wordlist: &str, flags: &[&'static str]) -> Self {
         Self {
             name: name.to_string(),
             description: description.to_string(),
@@ -35,16 +36,16 @@ fn find_wordlist(candidates: &[&str]) -> Option<String> {
     None
 }
 
-pub fn run_web_enum(target: &str, use_proxy: bool) {
+pub fn run_web_enum(target: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     // 1. Validation
     if !target.starts_with("http://") && !target.starts_with("https://") {
-        println!("{}", "[!] Target must start with http:// or https://".red());
+        io.println(&format!("{}", "[!] Target must start with http:// or https://".red()));
         return;
     }
 
     // Check gobuster availability
-    if Command::new("gobuster").arg("version").output().is_err() {
-        println!("{}", "[-] 'gobuster' not found. Please install it (sudo pacman -S gobuster).".red());
+    if executor.execute_output("gobuster", &["version"]).is_err() {
+        io.println(&format!("{}", "[-] 'gobuster' not found. Please install it (sudo pacman -S gobuster).".red()));
         return;
     }
 
@@ -95,15 +96,14 @@ pub fn run_web_enum(target: &str, use_proxy: bool) {
     ));
 
     // 4. Select Profile
-    println!("\n{}", "Select Web Enumeration Profile:".blue().bold());
+    io.println(&format!("\n{}", "Select Web Enumeration Profile:".blue().bold()));
     for (i, p) in profiles.iter().enumerate() {
-        println!("[{}] {} - {}", i + 1, p.name.green(), p.description);
+        io.println(&format!("[{}] {} - {}", i + 1, p.name.green(), p.description));
     }
 
-    print!("\nChoose a profile [1-{}]: ", profiles.len());
-    let _ = io::stdout().flush();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap_or_default();
+    io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
+    io.flush();
+    let input = io.read_line();
 
     let mut selected_profile = if let Ok(idx) = input.trim().parse::<usize>() {
         if idx > 0 && idx <= profiles.len() {
@@ -117,15 +117,14 @@ pub fn run_web_enum(target: &str, use_proxy: bool) {
 
     // Handle Manual Wordlist
     if selected_profile.wordlist == "manual" {
-        print!("{}", "Enter path to wordlist: ".yellow());
-        let _ = io::stdout().flush();
-        let mut path = String::new();
-        io::stdin().read_line(&mut path).unwrap_or_default();
+        io.print(&format!("{}", "Enter path to wordlist: ".yellow()));
+        io.flush();
+        let path = io.read_line();
         let path = path.trim();
         if Path::new(path).exists() {
             selected_profile.wordlist = path.to_string();
         } else {
-            println!("{}", "[!] Wordlist not found.".red());
+            io.println(&format!("{}", "[!] Wordlist not found.".red()));
             return;
         }
     }
@@ -137,42 +136,52 @@ pub fn run_web_enum(target: &str, use_proxy: bool) {
     fs::create_dir_all(&output_dir).expect("Failed to create output dir");
     let output_file = format!("{}/gobuster.txt", output_dir);
 
-    println!("{}", format!("\n[+] Starting Gobuster on {}", target).green());
-    println!("    Wordlist: {}", selected_profile.wordlist);
-    println!("[+] Saving output to: {}", output_file);
+    io.println(&format!("{}", format!("\n[+] Starting Gobuster on {}", target).green()));
+    io.println(&format!("    Wordlist: {}", selected_profile.wordlist));
+    io.println(&format!("[+] Saving output to: {}", output_file));
 
     // 6. Execute
-    // cmd: gobuster dir -u <url> -w <wordlist> [flags]
-    let mut cmd_args = vec!["dir", "-u", target, "-w", &selected_profile.wordlist, "-o", &output_file];
-    cmd_args.extend(selected_profile.flags.iter());
+    let (final_cmd, final_args) = build_gobuster_command("gobuster", target, &selected_profile.wordlist, &output_file, &selected_profile.flags, use_proxy);
+    let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
-    let mut final_cmd = "gobuster";
-    let mut final_args_vec: Vec<String> = cmd_args.iter().map(|s| s.to_string()).collect();
-
-    if use_proxy {
-        final_args_vec.insert(0, "gobuster".to_string());
-        final_cmd = "proxychains";
-    }
-
-    let final_args_str: Vec<&str> = final_args_vec.iter().map(|s| s.as_str()).collect();
-
-    let status = Command::new(final_cmd)
-        .args(&final_args_str)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
+    let status = executor.execute(&final_cmd, &final_args_str);
 
     match status {
         Ok(s) => {
             if s.success() {
-                println!("{}", "\n[+] Enumeration complete.".green());
+                io.println(&format!("{}", "\n[+] Enumeration complete.".green()));
                 let _ = append_history(&HistoryEntry::new("WebEnum", target, "Success"));
             } else {
-                println!("{}", "\n[!] Gobuster failed or was interrupted.".yellow());
+                io.println(&format!("{}", "\n[!] Gobuster failed or was interrupted.".yellow()));
                 let _ = append_history(&HistoryEntry::new("WebEnum", target, "Failed/Stopped"));
             }
         },
-        Err(e) => println!("{} {}", "[!] Failed to start process:".red(), e),
+        Err(e) => io.println(&format!("{} {}", "[!] Failed to start process:".red(), e)),
     }
 }
+
+pub fn build_gobuster_command(
+    base_cmd: &str,
+    target: &str,
+    wordlist: &str,
+    output_file: &str,
+    flags: &[&str],
+    use_proxy: bool
+) -> (String, Vec<String>) {
+    let mut args = vec!["dir".to_string(), "-u".to_string(), target.to_string(), "-w".to_string(), wordlist.to_string(), "-o".to_string(), output_file.to_string()];
+    args.extend(flags.iter().map(|s| s.to_string()));
+
+    let mut final_cmd = base_cmd.to_string();
+    let mut final_args = args;
+
+    if use_proxy {
+        final_args.insert(0, final_cmd);
+        final_cmd = "proxychains".to_string();
+    }
+
+    (final_cmd, final_args)
+}
+
+#[cfg(test)]
+#[path = "web_tests.rs"]
+mod tests;

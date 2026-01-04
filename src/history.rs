@@ -3,6 +3,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::Path;
 use chrono::{DateTime, Local};
+use crate::io_handler::IoHandler;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HistoryEntry {
@@ -25,8 +26,11 @@ impl HistoryEntry {
 }
 
 pub fn append_history(entry: &HistoryEntry) -> io::Result<()> {
-    let file_path = "scan_history.json";
-    let mut history = load_history()?;
+    append_history_to_file(entry, "scan_history.json")
+}
+
+pub fn append_history_to_file(entry: &HistoryEntry, file_path: &str) -> io::Result<()> {
+    let mut history = load_history_from_file(file_path)?;
     history.push(entry.clone());
     
     let json = serde_json::to_string_pretty(&history)?;
@@ -40,7 +44,10 @@ pub fn append_history(entry: &HistoryEntry) -> io::Result<()> {
 }
 
 pub fn load_history() -> io::Result<Vec<HistoryEntry>> {
-    let file_path = "scan_history.json";
+    load_history_from_file("scan_history.json")
+}
+
+pub fn load_history_from_file(file_path: &str) -> io::Result<Vec<HistoryEntry>> {
     if !Path::new(file_path).exists() {
         return Ok(Vec::new());
     }
@@ -59,16 +66,20 @@ pub fn load_history() -> io::Result<Vec<HistoryEntry>> {
     }
 }
 
-pub fn print_history() {
+pub fn print_history(io: &dyn IoHandler) {
     let history = load_history().unwrap_or_default();
     if history.is_empty() {
-        println!("No history found.");
+        io.println("No history found.");
         return;
     }
     
-    println!("{:<20} | {:<10} | {:<20} | {:<10}", "Timestamp", "Mode", "Target", "Status");
-    println!("{}", "-".repeat(70));
+    io.println(&format!("{:<20} | {:<10} | {:<20} | {:<10}", "Timestamp", "Mode", "Target", "Status"));
+    io.println(&"-".repeat(70));
     for entry in history {
-        println!("{:<20} | {:<10} | {:<20} | {:<10}", entry.timestamp, entry.mode, entry.target, entry.status);
+        io.println(&format!("{:<20} | {:<10} | {:<20} | {:<10}", entry.timestamp, entry.mode, entry.target, entry.status));
     }
 }
+
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod tests;
