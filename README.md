@@ -2,13 +2,12 @@
 
 A powerful, interactive, and automated CLI tool for Red Teaming and Network Security auditing, written in Rust. nt_test acts as a central control proxy, orchestrating industry-standard tools like Nmap and Wifite into a streamlined, safe, and efficient workflow.
 
-
 ## Key Features
 
 *   **Multi-Tool Automation:**
     *   **Nmap:** Automated scanning profiles (Stealth, Quick, Intense, Paranoid) with intelligent optimization for large networks (Class A/B).
     *   **Wifite:** Automated WiFi auditing wrapper with monitor mode handling and cleanup.
-    *   **Tcpdump:** Integrated packet sniffing (via legacy script support).
+    *   **Tcpdump:** Integrated packet sniffing with real-time traffic analysis and reporting.
 *   **Evasion and Anonymity:**
     *   **Proxychains Integration:** Toggleable global proxy support to route all scans through Tor/SOCKS proxies for anonymity.
     *   **Smart Privilege Handling:** Automatically detects root requirements. Allows standard users to run safe scans or safely elevates privileges (via sudo) only when necessary with secure validation.
@@ -21,6 +20,9 @@ A powerful, interactive, and automated CLI tool for Red Teaming and Network Secu
     *   View past scan reports interactively.
 *   **Optimization:**
     *   **Class A Support:** Auto-detects large ranges (/8) and switches to optimized "Mass Scan" settings (no DNS, aggressive timing, rate-limited) to prevent timeouts.
+*   **Robust Architecture:**
+    *   **Testable Design:** Built with dependency injection to allow comprehensive unit testing without side effects.
+    *   **High Coverage:** Maintains >60% code coverage to ensure reliability.
 
 ## Usage
 
@@ -46,5 +48,13 @@ A powerful, interactive, and automated CLI tool for Red Teaming and Network Secu
 ```bash
 cargo build --release
 ```
+
+## Testing
+
+Run the unit tests:
+```bash
+cargo test
+```
+
 ## Roadmap
 Improve wifite implementation
