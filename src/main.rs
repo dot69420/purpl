@@ -8,77 +8,81 @@ mod brute;
 mod exploit;
 mod poison;
 mod bluetooth;
+pub mod executor;
+pub mod io_handler;
 
 use clap::{Parser, Subcommand};
 use std::process::Command;
 use std::path::Path;
-use std::io::{self, Write};
+use std::io::Write;
 use colored::*;
 use history::print_history;
+use executor::{CommandExecutor, ShellExecutor};
+use io_handler::{IoHandler, RealIoHandler};
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(name = "nt_test")]
 #[command(about = "Network Testing & Automation Tool (formerly lab_tool)", long_about = None)]
-struct Cli {
+pub struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
+    pub command: Option<Commands>,
 
     /// Run Nmap scan on target
     #[arg(short, long)]
-    nmap: Option<String>,
+    pub nmap: Option<String>,
 
     /// Run WiFi Audit on interface
     #[arg(short, long)]
-    wifite: Option<String>,
+    pub wifite: Option<String>,
 
     /// Run Packet Sniffer on interface
     #[arg(short, long)]
-    sniff: Option<String>,
+    pub sniff: Option<String>,
 
     /// Run Web Enumeration on target URL
     #[arg(long)]
-    web: Option<String>,
+    pub web: Option<String>,
 
     /// Run Brute Force on target IP
     #[arg(long)]
-    brute: Option<String>,
+    pub brute: Option<String>,
 
     /// Run Exploit Search on target (IP or XML path)
     #[arg(long)]
-    exploit: Option<String>,
+    pub exploit: Option<String>,
 
     /// Run LAN Poisoning on interface
     #[arg(long)]
-    poison: Option<String>,
+    pub poison: Option<String>,
 
     /// Run Bluetooth attacks (optional target MAC)
     #[arg(long)]
-    bluetooth: Option<String>,
+    pub bluetooth: Option<String>,
 
     /// Enable Proxychains for evasion
     #[arg(short, long, default_value_t = false)]
-    proxy: bool,
+    pub proxy: bool,
 }
 
-#[derive(Subcommand)]
-enum Commands {
+#[derive(Subcommand, Debug, PartialEq)]
+pub enum Commands {
     /// Show scan history
     History,
 }
 
-struct Tool {
-    name: String,
+pub struct Tool {
+    pub name: String,
     // We keep script path just for reference or legacy, 
     // but we will try to use internal Rust functions first.
-    script: String, 
-    needs_arg: bool,
-    arg_prompt: String,
-    use_sudo: bool,
-    function: Option<fn(&str, bool)>, // Pointer to internal function
+    pub script: String,
+    pub needs_arg: bool,
+    pub arg_prompt: String,
+    pub use_sudo: bool,
+    pub function: Option<fn(&str, bool, &dyn CommandExecutor, &dyn IoHandler)>, // Pointer to internal function
 }
 
 impl Tool {
-    fn new(name: &str, script: &str, needs_arg: bool, arg_prompt: &str, use_sudo: bool, func: Option<fn(&str, bool)>) -> Self {
+    pub fn new(name: &str, script: &str, needs_arg: bool, arg_prompt: &str, use_sudo: bool, func: Option<fn(&str, bool, &dyn CommandExecutor, &dyn IoHandler)>) -> Self {
         Self {
             name: name.to_string(),
             script: script.to_string(),
@@ -90,101 +94,58 @@ impl Tool {
     }
 }
 
+#[cfg(test)]
+#[path = "main_tests.rs"]
+mod tests;
+
 fn clear_screen() {
     let _ = Command::new("clear").status();
 }
 
-fn print_banner() {
-    println!("{}", "    ███╗   ██╗████████╗    ████████╗███████╗███████╗████████╗".green().bold());
-    println!("{}", "    ████╗  ██║╚══██╔══╝    ╚══██╔══╝██╔════╝██╔════╝╚══██╔══╝".green().bold());
-    println!("{}", "    ██╔██╗ ██║   ██║          ██║   █████╗  ███████╗   ██║   ".green().bold());
-    println!("{}", "    ██║╚██╗██║   ██║          ██║   ██╔══╝  ╚════██║   ██║   ".green().bold());
-    println!("{}", "    ██║ ╚████║   ██║          ██║   ███████╗███████║   ██║   ".green().bold());
-    println!("{}", "    ╚═╝  ╚═══╝   ╚═╝          ╚═╝   ╚══════╝╚══════╝   ╚═╝   ".green().bold());
-    println!("\n{}", "              NT_TEST Control Center | Rust Edition v2.0\n".blue());
+pub fn print_banner(io: &dyn IoHandler) {
+    io.println(&format!("{}", "    ███╗   ██╗████████╗    ████████╗███████╗███████╗████████╗".green().bold()));
+    io.println(&format!("{}", "    ████╗  ██║╚══██╔══╝    ╚══██╔══╝██╔════╝██╔════╝╚══██╔══╝".green().bold()));
+    io.println(&format!("{}", "    ██╔██╗ ██║   ██║          ██║   █████╗  ███████╗   ██║   ".green().bold()));
+    io.println(&format!("{}", "    ██║╚██╗██║   ██║          ██║   ██╔══╝  ╚════██║   ██║   ".green().bold()));
+    io.println(&format!("{}", "    ██║ ╚████║   ██║          ██║   ███████╗███████║   ██║   ".green().bold()));
+    io.println(&format!("{}", "    ╚═╝  ╚═══╝   ╚═╝          ╚═╝   ╚══════╝╚══════╝   ╚═╝   ".green().bold()));
+    io.println(&format!("\n{}", "              NT_TEST Control Center | Rust Edition v2.0\n".blue()));
 }
 
-fn run_legacy_script(script: &str, arg: &str, use_sudo: bool) {
-    let mut cmd = if use_sudo {
-        let mut c = Command::new("sudo");
-        c.arg(format!("./{}", script));
-        c
+pub fn run_legacy_script(script: &str, arg: &str, use_sudo: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+    let args = if !arg.is_empty() {
+        vec![arg]
     } else {
-        Command::new(format!("./{}", script))
+        vec![]
     };
 
-    if !arg.is_empty() {
-        cmd.arg(arg);
-    }
+    let script_path = format!("./{}", script);
 
-    cmd.stdin(std::process::Stdio::inherit())
-       .stdout(std::process::Stdio::inherit())
-       .stderr(std::process::Stdio::inherit());
+    let res = if use_sudo {
+        let mut sudo_args = vec![script_path.as_str()];
+        if !arg.is_empty() {
+            sudo_args.push(arg);
+        }
+        executor.execute("sudo", &sudo_args)
+    } else {
+        let mut script_args = vec![];
+        if !arg.is_empty() {
+            script_args.push(arg);
+        }
+        executor.execute(&script_path, &script_args)
+    };
 
-    match cmd.status() {
+    match res {
         Ok(_) => {{}},
-        Err(e) => println!("{}", format!("[!] Failed to execute script: {}", e).red()),
+        Err(e) => io.println(&format!("{}", format!("[!] Failed to execute script: {}", e).red())),
     }
 
-    print!("\nPress Enter to return to menu...");
-    let _ = io::stdout().flush();
-    let mut temp = String::new();
-    let _ = io::stdin().read_line(&mut temp);
+    io.print("\nPress Enter to return to menu...");
+    io.flush();
+    let _ = io.read_line();
 }
 
-fn main() {
-    let cli = Cli::parse();
-
-    // Global Proxy State
-    let mut use_proxy = cli.proxy;
-
-    // Handle Flags/Subcommands
-    if let Some(target) = cli.nmap {
-        nmap::run_nmap_scan(&target, use_proxy);
-        return;
-    }
-
-    if let Some(interface) = cli.wifite {
-        wifi::run_wifi_audit(&interface, use_proxy);
-        return;
-    }
-
-    if let Some(interface) = cli.sniff {
-        sniffer::run_sniffer(&interface, use_proxy);
-        return;
-    }
-
-    if let Some(target) = cli.web {
-        web::run_web_enum(&target, use_proxy);
-        return;
-    }
-
-    if let Some(target) = cli.brute {
-        brute::run_brute_force(&target, use_proxy);
-        return;
-    }
-
-    if let Some(target) = cli.exploit {
-        exploit::run_exploit_search(&target, use_proxy);
-        return;
-    }
-
-    if let Some(interface) = cli.poison {
-        poison::run_poisoning(&interface, use_proxy);
-        return;
-    }
-
-    if let Some(arg) = cli.bluetooth {
-        bluetooth::run_bluetooth_attacks(&arg, use_proxy);
-        return;
-    }
-
-    if let Some(Commands::History) = cli.command {
-        print_history();
-        return;
-    }
-
-    // Interactive Mode (Default)
+pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     let tools = vec![
         Tool::new("Network Scan (Nmap Automation)", "nmap_automator.sh", true, "Enter target IP or Range: ", true, Some(nmap::run_nmap_scan)),
         Tool::new("Web Enumeration (Gobuster)", "gobuster.sh", true, "Enter Target URL (http://...): ", false, Some(web::run_web_enum)),
@@ -198,25 +159,27 @@ fn main() {
 
     loop {
         clear_screen();
-        print_banner();
+        print_banner(io);
         
         // Proxy Status Indicator
         let proxy_status = if use_proxy { "ON".magenta().bold() } else { "OFF".dimmed() };
-        println!("              Proxychains: [{}]\n", proxy_status);
+        io.println(&format!("              Proxychains: [{}]\n", proxy_status));
 
         for (i, tool) in tools.iter().enumerate() {
-            println!("[{}] {}", i + 1, tool.name);
+            io.println(&format!("[{}] {}", i + 1, tool.name));
         }
-        println!("[{}] View Scan Results", tools.len() + 1);
-        println!("[{}] View History", tools.len() + 2);
-        println!("[{}] Toggle Proxychains", tools.len() + 3);
-        println!("[{}] Exit", tools.len() + 4);
+        io.println(&format!("[{}] View Scan Results", tools.len() + 1));
+        io.println(&format!("[{}] View History", tools.len() + 2));
+        io.println(&format!("[{}] Toggle Proxychains", tools.len() + 3));
+        io.println(&format!("[{}] Exit", tools.len() + 4));
         
-        print!("\n{}", "Select an option: ".green());
-        let _ = io::stdout().flush();
+        io.print(&format!("\n{}", "Select an option: ".green()));
+        io.flush();
 
-        let mut choice_str = String::new();
-        io::stdin().read_line(&mut choice_str).expect("Failed to read line");
+        let choice_str = io.read_line();
+        if choice_str.is_empty() {
+            break; // EOF
+        }
         let choice_str = choice_str.trim();
 
         if let Ok(choice_idx) = choice_str.parse::<usize>() {
@@ -225,9 +188,9 @@ fn main() {
                 let mut arg = String::new();
                 
                 if tool.needs_arg {
-                    print!("{}", tool.arg_prompt);
-                    let _ = io::stdout().flush();
-                    io::stdin().read_line(&mut arg).expect("Failed to read line");
+                    io.print(&format!("{}", tool.arg_prompt));
+                    io.flush();
+                    arg = io.read_line();
                     arg = arg.trim().to_string();
                     if arg.is_empty() && tool.arg_prompt.contains("Optional") {
                          // Allowed empty
@@ -240,40 +203,34 @@ fn main() {
                 
                 // Use Rust implementation if available, else legacy script
                 if let Some(func) = tool.function {
-                    func(&arg, use_proxy);
-                    print!("\nPress Enter to return to menu...");
-                    let _ = io::stdout().flush();
-                    let mut temp = String::new();
-                    let _ = io::stdin().read_line(&mut temp);
+                    func(&arg, use_proxy, executor, io);
+                    io.print("\nPress Enter to return to menu...");
+                    io.flush();
+                    let _ = io.read_line();
                 } else {
-                    run_legacy_script(&tool.script, &arg, tool.use_sudo);
+                    run_legacy_script(&tool.script, &arg, tool.use_sudo, executor, io);
                 }
 
             } else if choice_idx == tools.len() + 1 {
                 // View Scan Results
                 if !Path::new("scans").exists() {
-                    println!("{}", "[!] No scans found yet.".yellow());
+                    io.println(&format!("{}", "[!] No scans found yet.".yellow()));
                 } else {
-                    // Recursively or just top-level? 
-                    // Structure is scans/<target>/<date>/...
-                    // Let's list targets first, then dates.
-                    
                     if let Ok(targets) = std::fs::read_dir("scans") {
                         let mut targets: Vec<_> = targets.flatten().collect();
                         targets.sort_by_key(|t| t.file_name());
 
                         if targets.is_empty() {
-                            println!("{}", "No scan targets found.".yellow());
+                            io.println(&format!("{}", "No scan targets found.".yellow()));
                         } else {
-                            println!("\n{}", "Available Targets:".blue().bold());
+                            io.println(&format!("\n{}", "Available Targets:".blue().bold()));
                             for (i, target) in targets.iter().enumerate() {
-                                println!("[{}] {}", i + 1, target.file_name().to_string_lossy());
+                                io.println(&format!("[{}] {}", i + 1, target.file_name().to_string_lossy()));
                             }
                             
-                            print!("\nSelect target: ");
-                            let _ = io::stdout().flush();
-                            let mut t_in = String::new();
-                            io::stdin().read_line(&mut t_in).unwrap_or_default();
+                            io.print("\nSelect target: ");
+                            io.flush();
+                            let t_in = io.read_line();
                             
                             if let Ok(t_idx) = t_in.trim().parse::<usize>() {
                                 if t_idx > 0 && t_idx <= targets.len() {
@@ -285,55 +242,110 @@ fn main() {
                                         dates.sort_by_key(|d| d.metadata().ok().map(|m| m.modified().ok()).flatten());
                                         dates.reverse(); // Newest first
 
-                                        println!("\n{}", format!("Scans for {}:", selected_target.file_name().to_string_lossy()).blue().bold());
+                                        io.println(&format!("\n{}", format!("Scans for {}:", selected_target.file_name().to_string_lossy()).blue().bold()));
                                         for (j, date) in dates.iter().enumerate() {
-                                            println!("[{}] {}", j + 1, date.file_name().to_string_lossy());
+                                            io.println(&format!("[{}] {}", j + 1, date.file_name().to_string_lossy()));
                                         }
 
-                                        print!("\nSelect scan date: ");
-                                        let _ = io::stdout().flush();
-                                        let mut d_in = String::new();
-                                        io::stdin().read_line(&mut d_in).unwrap_or_default();
+                                        io.print("\nSelect scan date: ");
+                                        io.flush();
+                                        let d_in = io.read_line();
 
                                         if let Ok(d_idx) = d_in.trim().parse::<usize>() {
                                             if d_idx > 0 && d_idx <= dates.len() {
                                                 let selected_date = &dates[d_idx - 1];
-                                                report::display_scan_report(&selected_date.path());
+                                                report::display_scan_report(&selected_date.path(), io);
                                             } else {
-                                                println!("{}", "Invalid date selection.".red());
+                                                io.println(&format!("{}", "Invalid date selection.".red()));
                                             }
                                         }
                                     }
                                 } else {
-                                    println!("{}", "Invalid target selection.".red());
+                                    io.println(&format!("{}", "Invalid target selection.".red()));
                                 }
                             }
                         }
                     }
                 }
 
-                print!("\nPress Enter to return...");
-                let _ = io::stdout().flush();
-                let mut temp = String::new();
-                let _ = io::stdin().read_line(&mut temp);
+                io.print("\nPress Enter to return...");
+                io.flush();
+                let _ = io.read_line();
             } else if choice_idx == tools.len() + 2 {
-                print_history();
-                print!("\nPress Enter to return...");
-                let _ = io::stdout().flush();
-                let mut temp = String::new();
-                let _ = io::stdin().read_line(&mut temp);
+                print_history(io);
+                io.print("\nPress Enter to return...");
+                io.flush();
+                let _ = io.read_line();
             } else if choice_idx == tools.len() + 3 {
                 use_proxy = !use_proxy;
             } else if choice_idx == tools.len() + 4 {
-                println!("\nExiting. Stay safe!");
+                io.println("\nExiting. Stay safe!");
                 break;
             } else {
-                println!("{}", "[!] Invalid choice.".red());
+                io.println(&format!("{}", "[!] Invalid choice.".red()));
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
         } else {
-            println!("{}", "[!] Invalid input.".red());
+            io.println(&format!("{}", "[!] Invalid input.".red()));
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }
+}
+
+fn main() {
+    let cli = Cli::parse();
+    let executor = ShellExecutor;
+    let io = RealIoHandler;
+
+    // Global Proxy State
+    let use_proxy = cli.proxy;
+
+    // Handle Flags/Subcommands
+    if let Some(target) = cli.nmap {
+        nmap::run_nmap_scan(&target, use_proxy, &executor, &io);
+        return;
+    }
+
+    if let Some(interface) = cli.wifite {
+        wifi::run_wifi_audit(&interface, use_proxy, &executor, &io);
+        return;
+    }
+
+    if let Some(interface) = cli.sniff {
+        sniffer::run_sniffer(&interface, use_proxy, &executor, &io);
+        return;
+    }
+
+    if let Some(target) = cli.web {
+        web::run_web_enum(&target, use_proxy, &executor, &io);
+        return;
+    }
+
+    if let Some(target) = cli.brute {
+        brute::run_brute_force(&target, use_proxy, &executor, &io);
+        return;
+    }
+
+    if let Some(target) = cli.exploit {
+        exploit::run_exploit_search(&target, use_proxy, &executor, &io);
+        return;
+    }
+
+    if let Some(interface) = cli.poison {
+        poison::run_poisoning(&interface, use_proxy, &executor, &io);
+        return;
+    }
+
+    if let Some(arg) = cli.bluetooth {
+        bluetooth::run_bluetooth_attacks(&arg, use_proxy, &executor, &io);
+        return;
+    }
+
+    if let Some(Commands::History) = cli.command {
+        print_history(&io);
+        return;
+    }
+
+    // Interactive Mode (Default)
+    run_interactive_mode(use_proxy, &executor, &io);
 }

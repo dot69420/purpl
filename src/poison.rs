@@ -1,20 +1,20 @@
-use std::process::{Command, Stdio};
-use std::io::{self, Write};
 use std::fs;
 use std::path::Path;
 use chrono::Local;
 use colored::*;
 use crate::history::{append_history, HistoryEntry};
+use crate::executor::CommandExecutor;
+use crate::io_handler::IoHandler;
 
 #[derive(Debug, Clone)]
-struct PoisonProfile {
-    name: String,
-    description: String,
-    flags: Vec<&'static str>,
+pub struct PoisonProfile {
+    pub name: String,
+    pub description: String,
+    pub flags: Vec<&'static str>,
 }
 
 impl PoisonProfile {
-    fn new(name: &str, description: &str, flags: &[&'static str]) -> Self {
+    pub fn new(name: &str, description: &str, flags: &[&'static str]) -> Self {
         Self {
             name: name.to_string(),
             description: description.to_string(),
@@ -23,28 +23,28 @@ impl PoisonProfile {
     }
 }
 
-pub fn run_poisoning(interface_input: &str, _use_proxy: bool) {
+pub fn run_poisoning(interface_input: &str, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     // 1. Check Root
-    if unsafe { libc::geteuid() } != 0 {
-        println!("{}", "[!] LAN Poisoning requires ROOT privileges.".red());
+    if !executor.is_root() {
+        io.println(&format!("{}", "[!] LAN Poisoning requires ROOT privileges.".red()));
         return;
     }
 
     // 2. Check Dependency
-    if Command::new("responder").arg("--help").output().is_err() {
-        println!("{}", "[-] 'responder' not found. Please install it (sudo pacman -S responder).".red());
+    if executor.execute_output("responder", &["--help"]).is_err() {
+        io.println(&format!("{}", "[-] 'responder' not found. Please install it (sudo pacman -S responder).".red()));
         return;
     }
 
     // 3. Select Interface (if not provided or empty)
     let interface = if interface_input.is_empty() {
-        select_interface()
+        select_interface(executor, io)
     } else {
         interface_input.to_string()
     };
 
     if interface.is_empty() {
-        println!("{}", "[!] No interface selected.".red());
+        io.println(&format!("{}", "[!] No interface selected.".red()));
         return;
     }
 
@@ -68,15 +68,14 @@ pub fn run_poisoning(interface_input: &str, _use_proxy: bool) {
     ];
 
     // 5. Select Profile
-    println!("\n{}", "Select Poisoning Profile:".blue().bold());
+    io.println(&format!("\n{}", "Select Poisoning Profile:".blue().bold()));
     for (i, p) in profiles.iter().enumerate() {
-        println!("[{}] {} - {}", i + 1, p.name.green(), p.description);
+        io.println(&format!("[{}] {} - {}", i + 1, p.name.green(), p.description));
     }
 
-    print!("\nChoose a profile [1-{}]: ", profiles.len());
-    let _ = io::stdout().flush();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap_or_default();
+    io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
+    io.flush();
+    let input = io.read_line();
 
     let profile = if let Ok(idx) = input.trim().parse::<usize>() {
         if idx > 0 && idx <= profiles.len() {
@@ -97,24 +96,18 @@ pub fn run_poisoning(interface_input: &str, _use_proxy: bool) {
     let output_dir = format!("scans/poison/{}", date);
     fs::create_dir_all(&output_dir).expect("Failed to create output dir");
 
-    println!("{}", format!("\n[+] Starting Responder on {}", interface).green());
-    println!("{}", format!("[+] Profile: {}", profile.name).cyan());
-    println!("{}", "[!] Press Ctrl+C to stop.".yellow());
+    io.println(&format!("{}", format!("\n[+] Starting Responder on {}", interface).green()));
+    io.println(&format!("{}", format!("[+] Profile: {}", profile.name).cyan()));
+    io.println(&format!("{}", "[!] Press Ctrl+C to stop.".yellow()));
 
     // 7. Execute
-    // responder -I <iface> <flags>
-    let mut cmd_args = vec!["-I", &interface];
-    cmd_args.extend(profile.flags.iter().map(|s| s as &str));
+    let (responder_cmd, responder_args) = build_responder_command("responder", &interface, &profile.flags);
+    let responder_args_str: Vec<&str> = responder_args.iter().map(|s| s.as_str()).collect();
 
     // We use sudo implicitly because we checked root, but if we are not root (e.g. strict confinement), we fail.
     // But we checked geteuid 0.
 
-    let status = Command::new("responder")
-        .args(&cmd_args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
+    let status = executor.execute(&responder_cmd, &responder_args_str);
 
     // 8. Post-Run Cleanup / Log Retrieval
     // Try to find logs and move them?
@@ -124,20 +117,31 @@ pub fn run_poisoning(interface_input: &str, _use_proxy: bool) {
     // Check local logs first
     if Path::new("logs").exists() {
          let _ = fs::rename("logs", Path::new(&output_dir).join("logs"));
-         println!("{}", format!("[+] Logs moved to {}", output_dir).green());
+         io.println(&format!("{}", format!("[+] Logs moved to {}", output_dir).green()));
     }
 
     match status {
         Ok(_) => {
              let _ = append_history(&HistoryEntry::new("Poisoning", &interface, "Executed"));
         },
-        Err(e) => println!("{} {}", "[!] Failed to start process:".red(), e),
+        Err(e) => io.println(&format!("{} {}", "[!] Failed to start process:".red(), e)),
     }
 }
 
-fn select_interface() -> String {
+pub fn build_responder_command(
+    base_cmd: &str,
+    interface: &str,
+    flags: &[&str]
+) -> (String, Vec<String>) {
+    let mut args = vec!["-I".to_string(), interface.to_string()];
+    args.extend(flags.iter().map(|s| s.to_string()));
+
+    (base_cmd.to_string(), args)
+}
+
+fn select_interface(executor: &dyn CommandExecutor, io: &dyn IoHandler) -> String {
     // List interfaces using 'ip link'
-    let output = Command::new("ip").arg("link").output();
+    let output = executor.execute_output("ip", &["link"]);
     if let Ok(out) = output {
         let out_str = String::from_utf8_lossy(&out.stdout);
         let mut ifaces = Vec::new();
@@ -157,15 +161,14 @@ fn select_interface() -> String {
             return "eth0".to_string(); // Fallback
         }
 
-        println!("\n{}", "Available Interfaces:".blue());
+        io.println(&format!("\n{}", "Available Interfaces:".blue()));
         for (i, iface) in ifaces.iter().enumerate() {
-            println!("[{}] {}", i + 1, iface);
+            io.println(&format!("[{}] {}", i + 1, iface));
         }
 
-        print!("\nSelect Interface [1-{}]: ", ifaces.len());
-        let _ = io::stdout().flush();
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap_or_default();
+        io.print(&format!("\nSelect Interface [1-{}]: ", ifaces.len()));
+        io.flush();
+        let input = io.read_line();
 
         if let Ok(idx) = input.trim().parse::<usize>() {
             if idx > 0 && idx <= ifaces.len() {
@@ -177,3 +180,7 @@ fn select_interface() -> String {
         "eth0".to_string()
     }
 }
+
+#[cfg(test)]
+#[path = "poison_tests.rs"]
+mod tests;

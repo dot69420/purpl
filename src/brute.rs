@@ -1,22 +1,23 @@
-use std::process::{Command, Stdio};
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::Path;
 use std::fs;
 use chrono::Local;
 use colored::*;
 use crate::history::{append_history, HistoryEntry};
+use crate::executor::CommandExecutor;
+use crate::io_handler::IoHandler;
 
 #[derive(Debug, Clone)]
-struct BruteProfile {
-    name: String,
-    description: String,
-    userlist: String,
-    passlist: String,
-    flags: Vec<&'static str>,
+pub struct BruteProfile {
+    pub name: String,
+    pub description: String,
+    pub userlist: String,
+    pub passlist: String,
+    pub flags: Vec<&'static str>,
 }
 
 impl BruteProfile {
-    fn new(name: &str, description: &str, userlist: &str, passlist: &str, flags: &[&'static str]) -> Self {
+    pub fn new(name: &str, description: &str, userlist: &str, passlist: &str, flags: &[&'static str]) -> Self {
         Self {
             name: name.to_string(),
             description: description.to_string(),
@@ -37,29 +38,28 @@ fn find_wordlist(candidates: &[&str]) -> Option<String> {
     None
 }
 
-pub fn run_brute_force(target: &str, use_proxy: bool) {
+pub fn run_brute_force(target: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     // 1. Validation
-    if Command::new("hydra").arg("-h").output().is_err() {
-        println!("{}", "[-] 'hydra' not found. Please install it (sudo pacman -S hydra).".red());
+    if executor.execute_output("hydra", &["-h"]).is_err() {
+        io.println(&format!("{}", "[-] 'hydra' not found. Please install it (sudo pacman -S hydra).".red()));
         return;
     }
 
     if target.trim().is_empty() {
-        println!("{}", "[!] Target cannot be empty.".red());
+        io.println(&format!("{}", "[!] Target cannot be empty.".red()));
         return;
     }
 
     // 2. Select Protocol
-    println!("\n{}", "Select Target Protocol:".blue().bold());
+    io.println(&format!("\n{}", "Select Target Protocol:".blue().bold()));
     let protocols = vec!["ssh", "ftp", "telnet", "rdp", "mysql", "postgresql"];
     for (i, p) in protocols.iter().enumerate() {
-        println!("[{}] {}", i + 1, p);
+        io.println(&format!("[{}] {}", i + 1, p));
     }
     
-    print!("\nChoose protocol [1-{}]: ", protocols.len());
-    let _ = io::stdout().flush();
-    let mut p_in = String::new();
-    io::stdin().read_line(&mut p_in).unwrap_or_default();
+    io.print(&format!("\nChoose protocol [1-{}]: ", protocols.len()));
+    io.flush();
+    let p_in = io.read_line();
     
     let protocol = if let Ok(idx) = p_in.trim().parse::<usize>() {
         if idx > 0 && idx <= protocols.len() {
@@ -118,15 +118,14 @@ pub fn run_brute_force(target: &str, use_proxy: bool) {
     ));
 
     // 5. Select Profile
-    println!("\n{}", "Select Attack Profile:".blue().bold());
+    io.println(&format!("\n{}", "Select Attack Profile:".blue().bold()));
     for (i, p) in profiles.iter().enumerate() {
-        println!("[{}] {} - {}", i + 1, p.name.green(), p.description);
+        io.println(&format!("[{}] {} - {}", i + 1, p.name.green(), p.description));
     }
 
-    print!("\nChoose a profile [1-{}]: ", profiles.len());
-    let _ = io::stdout().flush();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap_or_default();
+    io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
+    io.flush();
+    let input = io.read_line();
 
     let mut selected_profile = if let Ok(idx) = input.trim().parse::<usize>() {
         if idx > 0 && idx <= profiles.len() {
@@ -141,17 +140,15 @@ pub fn run_brute_force(target: &str, use_proxy: bool) {
     // Handle Input/Manual
     let user_arg;
     if selected_profile.name.contains("Single User") {
-        print!("{}", "Enter Username to target: ".yellow());
-        let _ = io::stdout().flush();
-        let mut user = String::new();
-        io::stdin().read_line(&mut user).unwrap_or_default();
+        io.print(&format!("{}", "Enter Username to target: ".yellow()));
+        io.flush();
+        let user = io.read_line();
         selected_profile.userlist = user.trim().to_string();
         user_arg = "-l".to_string(); // Little l for single user
     } else if selected_profile.userlist == "manual" {
-         print!("{}", "Enter path to USER list: ".yellow());
-         let _ = io::stdout().flush();
-         let mut path = String::new();
-         io::stdin().read_line(&mut path).unwrap_or_default();
+         io.print(&format!("{}", "Enter path to USER list: ".yellow()));
+         io.flush();
+         let path = io.read_line();
          selected_profile.userlist = path.trim().to_string();
          user_arg = "-L".to_string(); // Big L for list
     } else {
@@ -159,10 +156,9 @@ pub fn run_brute_force(target: &str, use_proxy: bool) {
     }
 
     if selected_profile.passlist == "manual" {
-         print!("{}", "Enter path to PASSWORD list: ".yellow());
-         let _ = io::stdout().flush();
-         let mut path = String::new();
-         io::stdin().read_line(&mut path).unwrap_or_default();
+         io.print(&format!("{}", "Enter path to PASSWORD list: ".yellow()));
+         io.flush();
+         let path = io.read_line();
          selected_profile.passlist = path.trim().to_string();
     }
     let pass_arg = "-P".to_string(); // Big P for list (usually) - wait, hydra uses -P for list, -p for single
@@ -174,44 +170,26 @@ pub fn run_brute_force(target: &str, use_proxy: bool) {
     fs::create_dir_all(&output_dir).expect("Failed to create output dir");
     let output_file = format!("{}/hydra.txt", output_dir);
 
-    println!("{}", format!("\n[+] Starting Hydra on {}://{}", protocol, target).green());
-    println!("[+] Saving output to: {}", output_file);
+    io.println(&format!("{}", format!("\n[+] Starting Hydra on {}://{}", protocol, target).green()));
+    io.println(&format!("[+] Saving output to: {}", output_file));
 
     // 7. Execute
-    // hydra [flags] -L user -P pass target protocol
-    let mut cmd_args = selected_profile.flags.iter().map(|s| s.to_string()).collect::<Vec<String>>();
-    
-    // Add User arg
-    cmd_args.push(user_arg);
-    cmd_args.push(selected_profile.userlist);
-
-    // Add Pass arg
-    cmd_args.push(pass_arg);
-    cmd_args.push(selected_profile.passlist);
-
-    // Output file
-    cmd_args.push("-o".to_string());
-    cmd_args.push(output_file.clone());
-
-    // Target & Proto
-    cmd_args.push(target.to_string());
-    cmd_args.push(protocol.to_string());
-
-    let mut final_cmd = "hydra";
-    if use_proxy {
-        cmd_args.insert(0, "hydra".to_string());
-        final_cmd = "proxychains";
-    }
-
-    let final_args_str: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();
+    let (final_cmd, final_args) = build_hydra_command(
+        "hydra",
+        &selected_profile.flags,
+        &user_arg,
+        &selected_profile.userlist,
+        &pass_arg,
+        &selected_profile.passlist,
+        &output_file,
+        target,
+        protocol,
+        use_proxy
+    );
+    let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
     // Hydra outputs to stderr largely for status, stdout for found
-    let status = Command::new(final_cmd)
-        .args(&final_args_str)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
+    let status = executor.execute(&final_cmd, &final_args_str);
 
     match status {
         Ok(s) => {
@@ -219,18 +197,59 @@ pub fn run_brute_force(target: &str, use_proxy: bool) {
                 // Check if output file has content (successes)
                 if let Ok(content) = fs::read_to_string(&output_file) {
                     if !content.trim().is_empty() {
-                         println!("{}", "\n[+] Credentials Found!".green().bold());
-                         println!("{}", content);
+                         io.println(&format!("{}", "\n[+] Credentials Found!".green().bold()));
+                         io.println(&content);
                          let _ = append_history(&HistoryEntry::new("BruteForce", target, "CRACKED"));
                     } else {
-                         println!("{}", "\n[-] No credentials found.".yellow());
+                         io.println(&format!("{}", "\n[-] No credentials found.".yellow()));
                          let _ = append_history(&HistoryEntry::new("BruteForce", target, "Failed"));
                     }
                 }
             } else {
-                println!("{}", "\n[!] Hydra failed or was interrupted.".yellow());
+                io.println(&format!("{}", "\n[!] Hydra failed or was interrupted.".yellow()));
             }
         },
-        Err(e) => println!("{} {}", "[!] Failed to start process:".red(), e),
+        Err(e) => io.println(&format!("{} {}", "[!] Failed to start process:".red(), e)),
     }
 }
+
+pub fn build_hydra_command(
+    base_cmd: &str,
+    flags: &[&str],
+    user_arg: &str,
+    userlist: &str,
+    pass_arg: &str,
+    passlist: &str,
+    output_file: &str,
+    target: &str,
+    protocol: &str,
+    use_proxy: bool
+) -> (String, Vec<String>) {
+    let mut cmd_args: Vec<String> = flags.iter().map(|s| s.to_string()).collect();
+
+    cmd_args.push(user_arg.to_string());
+    cmd_args.push(userlist.to_string());
+
+    cmd_args.push(pass_arg.to_string());
+    cmd_args.push(passlist.to_string());
+
+    cmd_args.push("-o".to_string());
+    cmd_args.push(output_file.to_string());
+
+    cmd_args.push(target.to_string());
+    cmd_args.push(protocol.to_string());
+
+    let mut final_cmd = base_cmd.to_string();
+    let mut final_args = cmd_args;
+
+    if use_proxy {
+        final_args.insert(0, final_cmd);
+        final_cmd = "proxychains".to_string();
+    }
+
+    (final_cmd, final_args)
+}
+
+#[cfg(test)]
+#[path = "brute_tests.rs"]
+mod tests;
