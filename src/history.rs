@@ -17,7 +17,7 @@ impl HistoryEntry {
     pub fn new(mode: &str, target: &str, status: &str) -> Self {
         let now: DateTime<Local> = Local::now();
         Self {
-            timestamp: now.format("%Y-%m-%d %H:%M:%S").to_string(),
+            timestamp: now.format("%d/%m/%Y %H:%M:%S").to_string(),
             mode: mode.to_string(),
             target: target.to_string(),
             status: status.to_string(),

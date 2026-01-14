@@ -3,8 +3,7 @@ mod tests {
     use crate::brute::{run_brute_force, build_hydra_command, BruteProfile};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
-    use std::process::Output;
-    use std::os::unix::process::ExitStatusExt;
+
 
     #[test]
     fn test_run_brute_force_logic() {
@@ -12,13 +11,7 @@ mod tests {
         let io = MockIoHandler::new();
 
         // Mock 1: hydra check success
-        let help_out = Output {
-            status: ExitStatusExt::from_raw(0),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        };
-        executor.add_output(help_out);
-        executor.add_status(ExitStatusExt::from_raw(0));
+        executor.register_success("hydra");
 
         // Input: "1" (Select first protocol - e.g., SSH)
         io.add_input("1\n");

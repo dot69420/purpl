@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::path::Path;
 use std::fs;
 use chrono::Local;
@@ -36,7 +35,7 @@ fn find_wordlist(candidates: &[&str]) -> Option<String> {
     None
 }
 
-pub fn run_web_enum(target: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn run_web_enum(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     // 1. Validation
     if !target.starts_with("http://") && !target.starts_with("https://") {
         io.println(&format!("{}", "[!] Target must start with http:// or https://".red()));
@@ -141,7 +140,16 @@ pub fn run_web_enum(target: &str, use_proxy: bool, executor: &dyn CommandExecuto
     io.println(&format!("[+] Saving output to: {}", output_file));
 
     // 6. Execute
-    let (final_cmd, final_args) = build_gobuster_command("gobuster", target, &selected_profile.wordlist, &output_file, &selected_profile.flags, use_proxy);
+    let mut flags_vec: Vec<String> = selected_profile.flags.iter().map(|s| s.to_string()).collect();
+    if let Some(extras) = extra_args {
+         for arg in extras.split_whitespace() {
+             flags_vec.push(arg.to_string());
+         }
+    }
+    
+    let flags_ref: Vec<&str> = flags_vec.iter().map(|s| s.as_str()).collect();
+
+    let (final_cmd, final_args) = build_gobuster_command("gobuster", target, &selected_profile.wordlist, &output_file, &flags_ref, use_proxy);
     let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
     let status = executor.execute(&final_cmd, &final_args_str);

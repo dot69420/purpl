@@ -104,6 +104,9 @@ mod tests {
         // 3. Create Sniffer Report
         fs::write(scan_dir.join("report.txt"), "packets captured").unwrap();
 
+        // 4. Create Bluetooth/Generic Scan
+        fs::write(scan_dir.join("scan.txt"), "bluetooth devices found").unwrap();
+
         display_scan_report(scan_dir, &io);
 
         fs::remove_dir_all(scan_dir).unwrap();
@@ -112,5 +115,6 @@ mod tests {
         assert!(out.contains("Parsing Nmap Report"));
         assert!(out.contains("Parsing Wifite Report"));
         assert!(out.contains("Reading Packet Sniffer Report"));
+        assert!(out.contains("Reading Bluetooth/Generic Scan Report"));
     }
 }

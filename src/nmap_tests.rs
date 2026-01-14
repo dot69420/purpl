@@ -3,26 +3,20 @@ mod tests {
     use crate::nmap::{build_nmap_command, ScanProfile, run_nmap_scan};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
-    use std::process::Output;
-    use std::os::unix::process::ExitStatusExt;
+
 
     #[test]
     fn test_run_nmap_scan_logic() {
         let executor = MockExecutor::new();
         let io = MockIoHandler::new();
 
-        // 1. Host Discovery Output (success but mock doesn't write file)
-        let discovery_output = Output {
-            status: ExitStatusExt::from_raw(0),
-            stdout: b"Starting Nmap...".to_vec(),
-            stderr: Vec::new(),
-        };
-        executor.add_output(discovery_output);
+        // 1. Host Discovery Output
+        executor.register_output("nmap", b"Starting Nmap...");
 
         // Input: Select Profile ("2")
         io.add_input("2\n");
 
-        run_nmap_scan("192.168.1.1", false, &executor, &io);
+        run_nmap_scan("192.168.1.1", None, false, None, false, &executor, &io);
 
         let calls = executor.get_calls();
         assert!(calls.len() >= 1);

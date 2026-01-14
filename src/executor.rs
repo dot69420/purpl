@@ -1,11 +1,11 @@
-use std::io::{self, BufRead, BufReader, Cursor};
+use std::io::{self, BufRead, BufReader};
 use std::process::{Command, ExitStatus, Output, Stdio};
 #[cfg(test)]
-use std::cell::RefCell;
+use std::sync::Mutex;
 #[cfg(test)]
-use std::collections::VecDeque;
+use std::io::Cursor;
 
-pub trait CommandExecutor {
+pub trait CommandExecutor: Sync + Send {
     fn execute(&self, program: &str, args: &[&str]) -> io::Result<ExitStatus>;
     fn execute_output(&self, program: &str, args: &[&str]) -> io::Result<Output>;
     fn execute_silent(&self, program: &str, args: &[&str]) -> io::Result<ExitStatus>;
@@ -56,19 +56,45 @@ impl CommandExecutor for ShellExecutor {
     }
 }
 
+#[cfg(test)]
+use std::collections::HashMap;
+
+// ... (ShellExecutor implementation remains unchanged)
+
 // Mock for testing
 #[cfg(test)]
+#[derive(Clone)]
 pub struct ExecutedCall {
     pub command: String,
     pub args: Vec<String>,
 }
 
 #[cfg(test)]
+#[derive(Clone)]
+pub struct MockBehavior {
+    pub output: Output,
+    pub status: ExitStatus,
+}
+
+#[cfg(test)]
+impl Default for MockBehavior {
+    fn default() -> Self {
+        use std::os::unix::process::ExitStatusExt;
+        Self {
+            output: Output {
+                status: ExitStatusExt::from_raw(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            },
+            status: ExitStatusExt::from_raw(0),
+        }
+    }
+}
+
+#[cfg(test)]
 pub struct MockExecutor {
-    pub expected_calls: RefCell<Vec<(String, Vec<String>)>>,
-    pub mock_output: RefCell<VecDeque<Output>>,
-    pub mock_stream_output: RefCell<VecDeque<String>>,
-    pub mock_status: RefCell<VecDeque<ExitStatus>>,
+    pub expected_calls: Mutex<Vec<ExecutedCall>>,
+    pub registry: Mutex<HashMap<String, MockBehavior>>,
     pub root_status: bool,
 }
 
@@ -76,10 +102,8 @@ pub struct MockExecutor {
 impl MockExecutor {
     pub fn new() -> Self {
         Self {
-            expected_calls: RefCell::new(Vec::new()),
-            mock_output: RefCell::new(VecDeque::new()),
-            mock_stream_output: RefCell::new(VecDeque::new()),
-            mock_status: RefCell::new(VecDeque::new()),
+            expected_calls: Mutex::new(Vec::new()),
+            registry: Mutex::new(HashMap::new()),
             root_status: true,
         }
     }
@@ -88,52 +112,59 @@ impl MockExecutor {
         self.root_status = is_root;
     }
 
-    pub fn add_output(&self, output: Output) {
-        self.mock_output.borrow_mut().push_back(output);
+    pub fn register(&self, program: &str, behavior: MockBehavior) {
+        self.registry.lock().unwrap().insert(program.to_string(), behavior);
     }
 
-    pub fn add_stream_output(&self, output: &str) {
-        self.mock_stream_output.borrow_mut().push_back(output.to_string());
+    pub fn register_success(&self, program: &str) {
+        self.register(program, MockBehavior::default());
     }
 
-    pub fn add_status(&self, status: ExitStatus) {
-        self.mock_status.borrow_mut().push_back(status);
+    pub fn register_output(&self, program: &str, stdout: &[u8]) {
+        use std::os::unix::process::ExitStatusExt;
+        let behavior = MockBehavior {
+            output: Output {
+                status: ExitStatusExt::from_raw(0),
+                stdout: stdout.to_vec(),
+                stderr: Vec::new(),
+            },
+            status: ExitStatusExt::from_raw(0),
+        };
+        self.register(program, behavior);
     }
 
     pub fn get_calls(&self) -> Vec<ExecutedCall> {
-        self.expected_calls.borrow().iter().map(|(cmd, args)| {
-            ExecutedCall {
-                command: cmd.clone(),
-                args: args.clone(),
-            }
-        }).collect()
+        self.expected_calls.lock().unwrap().clone()
+    }
+
+    fn get_behavior(&self, program: &str) -> MockBehavior {
+        if let Some(b) = self.registry.lock().unwrap().get(program) {
+            b.clone()
+        } else {
+            // Default to success if not registered, to avoid crashes in loose tests
+            MockBehavior::default()
+        }
     }
 }
 
 #[cfg(test)]
 impl CommandExecutor for MockExecutor {
     fn execute(&self, program: &str, args: &[&str]) -> io::Result<ExitStatus> {
-        self.expected_calls.borrow_mut().push((program.to_string(), args.iter().map(|s| s.to_string()).collect()));
+        self.expected_calls.lock().unwrap().push(ExecutedCall {
+            command: program.to_string(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+        });
 
-        if let Some(status) = self.mock_status.borrow_mut().pop_front() {
-            Ok(status)
-        } else {
-             Ok(std::os::unix::process::ExitStatusExt::from_raw(0))
-        }
+        Ok(self.get_behavior(program).status)
     }
 
     fn execute_output(&self, program: &str, args: &[&str]) -> io::Result<Output> {
-        self.expected_calls.borrow_mut().push((program.to_string(), args.iter().map(|s| s.to_string()).collect()));
+        self.expected_calls.lock().unwrap().push(ExecutedCall {
+            command: program.to_string(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+        });
 
-        if let Some(output) = self.mock_output.borrow_mut().pop_front() {
-            Ok(output)
-        } else {
-            Ok(Output {
-                status: std::os::unix::process::ExitStatusExt::from_raw(0),
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            })
-        }
+        Ok(self.get_behavior(program).output)
     }
 
     fn execute_silent(&self, program: &str, args: &[&str]) -> io::Result<ExitStatus> {
@@ -141,15 +172,15 @@ impl CommandExecutor for MockExecutor {
     }
 
     fn spawn_stdout(&self, program: &str, args: &[&str]) -> io::Result<Box<dyn BufRead + Send>> {
-        self.expected_calls.borrow_mut().push((program.to_string(), args.iter().map(|s| s.to_string()).collect()));
+        self.expected_calls.lock().unwrap().push(ExecutedCall {
+            command: program.to_string(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+        });
 
-        let output = if let Some(out) = self.mock_stream_output.borrow_mut().pop_front() {
-            out
-        } else {
-            String::new()
-        };
+        let output = self.get_behavior(program).output.stdout;
+        let output_str = String::from_utf8_lossy(&output).to_string();
 
-        Ok(Box::new(BufReader::new(Cursor::new(output.into_bytes()))))
+        Ok(Box::new(BufReader::new(Cursor::new(output_str.into_bytes()))))
     }
 
     fn is_root(&self) -> bool {

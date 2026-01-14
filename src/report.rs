@@ -92,25 +92,91 @@ pub fn display_scan_report(scan_dir: &Path, io: &dyn IoHandler) {
     // 3. Look for Sniffer Report (report.txt)
     let sniffer_report = scan_dir.join("report.txt");
     if sniffer_report.exists() {
-        parse_and_print_sniffer(&sniffer_report, io);
+        print_text_report(&sniffer_report, io, "Packet Sniffer Report");
+        any_report_found = true;
+    }
+
+    // 4. Look for Bluetooth/Generic Scan (scan.txt)
+    let generic_scan = scan_dir.join("scan.txt");
+    if generic_scan.exists() {
+        print_text_report(&generic_scan, io, "Bluetooth/Generic Scan Report");
+        any_report_found = true;
+    }
+
+    // 5. Look for Gobuster Report (gobuster.txt)
+    let gobuster_scan = scan_dir.join("gobuster.txt");
+    if gobuster_scan.exists() {
+        print_gobuster_report(&gobuster_scan, io);
+        any_report_found = true;
+    }
+
+    // 6. Look for Hydra Report (hydra.txt)
+    let hydra_scan = scan_dir.join("hydra.txt");
+    if hydra_scan.exists() {
+        print_hydra_report(&hydra_scan, io);
         any_report_found = true;
     }
 
     if !any_report_found {
-        io.println(&format!("{}", "No recognized report files (Nmap XML, Wifite JSON, Sniffer TXT) found in this directory.".yellow()));
+        io.println(&format!("{}", "No recognized report files (Nmap XML, Wifite JSON, Gobuster, Hydra, Sniffer/Generic TXT) found in this directory.".yellow()));
     }
 }
 
-fn parse_and_print_sniffer(path: &Path, io: &dyn IoHandler) {
-    io.println(&format!("{}", format!("\nReading Packet Sniffer Report: {}", path.file_name().unwrap().to_string_lossy()).magenta()));
+fn print_text_report(path: &Path, io: &dyn IoHandler, title: &str) {
+    io.println(&format!("{}", format!("\nReading {}: {}", title, path.file_name().unwrap().to_string_lossy()).magenta()));
     io.println(&"-".repeat(60));
     
     match fs::read_to_string(path) {
         Ok(content) => {
-            // Just print the content as it's already formatted by the sniffer tool
             io.println(&content);
         },
         Err(e) => io.println(&format!("{} {}", "[!] Failed to read report file:".red(), e)),
+    }
+}
+
+fn print_gobuster_report(path: &Path, io: &dyn IoHandler) {
+    io.println(&format!("{}", format!("\nParsing Web Enumeration Report: {}", path.file_name().unwrap().to_string_lossy()).cyan()));
+    io.println(&"-".repeat(60));
+
+    match fs::read_to_string(path) {
+        Ok(content) => {
+            for line in content.lines() {
+                if line.contains("(Status: 200)") {
+                    io.println(&format!("{}", line.green().bold()));
+                } else if line.contains("(Status: 301)") || line.contains("(Status: 302)") {
+                    io.println(&format!("{}", line.blue()));
+                } else if line.contains("(Status: 403)") || line.contains("(Status: 401)") {
+                    io.println(&format!("{}", line.yellow()));
+                } else {
+                    io.println(line);
+                }
+            }
+        },
+        Err(e) => io.println(&format!("{} {}", "[!] Failed to read file:".red(), e)),
+    }
+}
+
+fn print_hydra_report(path: &Path, io: &dyn IoHandler) {
+    io.println(&format!("{}", format!("\nParsing Credential Access Report: {}", path.file_name().unwrap().to_string_lossy()).red().bold()));
+    io.println(&"-".repeat(60));
+
+    match fs::read_to_string(path) {
+        Ok(content) => {
+            if content.trim().is_empty() {
+                io.println(&format!("{}", "[-] No credentials found in file.".yellow()));
+                return;
+            }
+            
+            for line in content.lines() {
+                // Hydra output format usually contains "login:" and "password:"
+                if line.contains("login:") && line.contains("password:") {
+                     io.println(&format!("  {} {}", "[CRACKED]".red().bold().blink(), line.green()));
+                } else {
+                     io.println(line);
+                }
+            }
+        },
+        Err(e) => io.println(&format!("{} {}", "[!] Failed to read file:".red(), e)),
     }
 }
 

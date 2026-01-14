@@ -1,7 +1,7 @@
-# NT_TEST Development Context & Architecture Blueprint
+# PURPL Development Context & Architecture Blueprint
 
 ## 1. Project Philosophy
-`nt_test` is a Rust-based CLI wrapper for offensive security tools. It prioritizes:
+`purpl` is a Rust-based CLI wrapper for offensive security tools. It prioritizes:
 - **Safety:** Sudo validation, input sanitization.
 - **Usability:** Profile-based execution (no manual flag memorization).
 - **Persistence:** Structured output (`scans/<type>/<date>/`).

@@ -1,10 +1,10 @@
-# NT_TEST: Implementation Guide & Development Manual
+# PURPL: Implementation Guide & Development Manual
 
-This document provides a comprehensive guide to the architecture, implementation details, and step-by-step build process of the `nt_test` Network Testing & Automation Tool.
+This document provides a comprehensive guide to the architecture, implementation details, and step-by-step build process of the `purpl` Network Testing & Automation Tool.
 
 ## 1. Core Philosophy & Architecture
 
-`nt_test` is designed as a unified command-line interface (CLI) that acts as an intelligent wrapper around industry-standard security tools (`nmap`, `wifite`, `tcpdump`, `gobuster`, `hydra`, `searchsploit`).
+`purpl` is designed as a unified command-line interface (CLI) that acts as an intelligent wrapper around industry-standard security tools (`nmap`, `wifite`, `tcpdump`, `gobuster`, `hydra`, `searchsploit`).
 
 ### Key Design Principles:
 1.  **Safety & Validation:** Never run a dangerous command without validation. Checks root privileges abstractly via `CommandExecutor`.
@@ -15,7 +15,7 @@ This document provides a comprehensive guide to the architecture, implementation
 
 ### Directory Structure
 ```
-nt_test/
+purpl/
 ├── src/
 │   ├── main.rs       # Entry point, interactive loop, and dependency wiring
 │   ├── executor.rs   # Command execution abstraction (Shell vs Mock)
@@ -114,7 +114,7 @@ cargo build --release
 
 ### Run
 ```bash
-./target/release/nt_test
+./target/release/purpl
 ```
 
 ### Testing

@@ -3,48 +3,22 @@ mod tests {
     use crate::wifi::{build_wifite_command, WifiProfile, run_wifi_audit};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
-    use std::process::{Output, ExitStatus};
-    use std::os::unix::process::ExitStatusExt;
 
-    fn empty_output() -> Output {
-        Output {
-            status: ExitStatusExt::from_raw(0),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        }
-    }
 
     #[test]
     fn test_run_wifi_audit_logic() {
         let executor = MockExecutor::new();
         let io = MockIoHandler::new();
 
-        // 1. check kill
-        executor.add_output(empty_output());
-        // 2. ip down
-        executor.add_output(empty_output());
-        // 3. macchanger
-        executor.add_output(empty_output());
-        // 4. ip up
-        executor.add_output(empty_output());
-        // 5. airmon start
-        executor.add_output(empty_output());
+        // Register success for all intermediate tools
+        executor.register_success("airmon-ng");
+        executor.register_success("ip");
+        executor.register_success("macchanger");
+        executor.register_success("systemctl");
+        executor.register_success("wifite");
 
         // 6. iwconfig
-        let iwconfig_out = Output {
-            status: ExitStatusExt::from_raw(0),
-            stdout: b"wlan0mon  Mode:Monitor  Frequency:2.437 GHz".to_vec(),
-            stderr: Vec::new(),
-        };
-        executor.add_output(iwconfig_out);
-
-        // 7. wifite (execute) -> status
-        executor.add_status(ExitStatusExt::from_raw(0));
-
-        // 8. airmon stop
-        executor.add_output(empty_output());
-        // 9. systemctl start
-        executor.add_output(empty_output());
+        executor.register_output("iwconfig", b"wlan0mon  Mode:Monitor  Frequency:2.437 GHz");
 
         // Input: Profile "1" (Auto-Pwn)
         io.add_input("1\n");
@@ -52,7 +26,16 @@ mod tests {
         run_wifi_audit("wlan0", false, &executor, &io);
 
         let calls = executor.get_calls();
-        // 9 calls total
+        // 9 calls total: 
+        // 1. airmon check
+        // 2. ip down
+        // 3. macchanger
+        // 4. ip up
+        // 5. airmon start
+        // 6. iwconfig
+        // 7. wifite
+        // 8. airmon stop
+        // 9. systemctl
         assert_eq!(calls.len(), 9);
         assert_eq!(calls[5].command, "iwconfig");
         assert_eq!(calls[6].command, "wifite");

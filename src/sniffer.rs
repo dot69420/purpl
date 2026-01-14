@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, Write};
 use std::fs::{self, File};
 use chrono::Local;
 use colored::*;
@@ -26,20 +26,28 @@ impl SniffProfile {
     }
 }
 
-#[derive(Debug)]
-struct PacketSummary {
-    timestamp: String,
-    src: String,
-    dst: String,
-    protocol: String,
-    payload_preview: String,
-}
+
 
 pub fn run_sniffer(interface: &str, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    // 1. Check Root
+    // 1. Check Root & Prompt for Sudo
+    let mut use_sudo = false;
     if !executor.is_root() {
-        io.println(&format!("{}", "[!] Packet sniffing requires ROOT privileges.".red()));
-        return;
+        io.print(&format!("\n{} {} [Y/n]: ", "[!]".red(), "Packet sniffing requires ROOT privileges. Attempt to elevate with sudo?".yellow().bold()));
+        io.flush();
+        let input = io.read_line();
+        
+        if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
+             use_sudo = true;
+             let status = executor.execute("sudo", &["-v"]);
+            
+             if status.is_err() || !status.unwrap().success() {
+                 io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
+                 return;
+             }
+        } else {
+             io.println(&format!("{}", "[-] Root required. Exiting.".red()));
+             return;
+        }
     }
 
     // 2. Select Profile
@@ -103,19 +111,9 @@ pub fn run_sniffer(interface: &str, _use_proxy: bool, executor: &dyn CommandExec
     io.println("[+] Live parsing... Press Ctrl+C to stop.");
 
     // 4. Start TCPDump
-    let (tcpdump_cmd, tcpdump_args) = build_sniffer_command("tcpdump", interface, &profile.args, &profile.filter);
+    let (tcpdump_cmd, tcpdump_args) = build_sniffer_command("tcpdump", interface, &profile.args, &profile.filter, use_sudo);
 
     let args_str: Vec<&str> = tcpdump_args.iter().map(|s| s.as_str()).collect();
-
-    // The executor trait execute_output doesn't support streaming/spawning easily with the current simple definition.
-    // However, for coverage, we can use execute_output which captures everything.
-    // For real usage, we want streaming.
-    // I should probably extend the trait or just use execute_output for simplicity in this refactor,
-    // accepting we might lose live streaming in the "ShellExecutor" unless I implement `spawn`.
-
-    // BUT, the current implementation uses `spawn` and reads stdout.
-    // `execute_output` waits.
-    // If I switch to `execute_output`, the tool will hang until Ctrl+C (which might not propagate).
 
     // Live parsing using spawn_stdout
     let reader = executor.spawn_stdout(&tcpdump_cmd, &args_str).expect("Failed to run tcpdump");
@@ -232,7 +230,8 @@ pub fn build_sniffer_command(
     base_cmd: &str,
     interface: &str,
     args: &[&str],
-    filter: &str
+    filter: &str,
+    use_sudo: bool
 ) -> (String, Vec<String>) {
     let mut final_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     final_args.push("-i".to_string());
@@ -242,8 +241,15 @@ pub fn build_sniffer_command(
     if !filter.is_empty() {
         final_args.push(filter.to_string());
     }
+    
+    let mut final_cmd = base_cmd.to_string();
+    
+    if use_sudo {
+        final_args.insert(0, final_cmd.to_string());
+        final_cmd = "sudo".to_string();
+    }
 
-    (base_cmd.to_string(), final_args)
+    (final_cmd, final_args)
 }
 
 #[cfg(test)]

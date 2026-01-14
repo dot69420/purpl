@@ -3,8 +3,7 @@ mod tests {
     use crate::web::{run_web_enum, build_gobuster_command, WebProfile};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
-    use std::process::Output;
-    use std::os::unix::process::ExitStatusExt;
+
 
     #[test]
     fn test_run_web_enum_logic() {
@@ -12,15 +11,7 @@ mod tests {
         let io = MockIoHandler::new();
 
         // Mock 1: gobuster version check success
-        let version_out = Output {
-            status: ExitStatusExt::from_raw(0),
-            stdout: b"Gobuster v3.0".to_vec(),
-            stderr: Vec::new(),
-        };
-        executor.add_output(version_out);
-
-        // Mock 2: gobuster run status success
-        executor.add_status(ExitStatusExt::from_raw(0));
+        executor.register_output("gobuster", b"Gobuster v3.0");
 
         // Input: "1" (select first profile)
         io.add_input("1\n");
@@ -28,7 +19,7 @@ mod tests {
         // Use /dev/null as a valid existing file path.
         io.add_input("/dev/null\n");
 
-        run_web_enum("http://example.com", false, &executor, &io);
+        run_web_enum("http://example.com", None, false, &executor, &io);
 
         let calls = executor.get_calls();
         // 1. version check

@@ -24,10 +24,25 @@ impl PoisonProfile {
 }
 
 pub fn run_poisoning(interface_input: &str, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    // 1. Check Root
+    // 1. Check Root & Prompt for Sudo
+    let mut use_sudo = false;
     if !executor.is_root() {
-        io.println(&format!("{}", "[!] LAN Poisoning requires ROOT privileges.".red()));
-        return;
+        io.print(&format!("\n{} {} [Y/n]: ", "[!]".red(), "LAN Poisoning requires ROOT privileges. Attempt to elevate with sudo?".yellow().bold()));
+        io.flush();
+        let input = io.read_line();
+        
+        if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
+             use_sudo = true;
+             let status = executor.execute("sudo", &["-v"]);
+            
+             if status.is_err() || !status.unwrap().success() {
+                 io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
+                 return;
+             }
+        } else {
+             io.println(&format!("{}", "[-] Root required. Exiting.".red()));
+             return;
+        }
     }
 
     // 2. Check Dependency
@@ -101,7 +116,7 @@ pub fn run_poisoning(interface_input: &str, _use_proxy: bool, executor: &dyn Com
     io.println(&format!("{}", "[!] Press Ctrl+C to stop.".yellow()));
 
     // 7. Execute
-    let (responder_cmd, responder_args) = build_responder_command("responder", &interface, &profile.flags);
+    let (responder_cmd, responder_args) = build_responder_command("responder", &interface, &profile.flags, use_sudo);
     let responder_args_str: Vec<&str> = responder_args.iter().map(|s| s.as_str()).collect();
 
     // We use sudo implicitly because we checked root, but if we are not root (e.g. strict confinement), we fail.
@@ -131,12 +146,19 @@ pub fn run_poisoning(interface_input: &str, _use_proxy: bool, executor: &dyn Com
 pub fn build_responder_command(
     base_cmd: &str,
     interface: &str,
-    flags: &[&str]
+    flags: &[&str],
+    use_sudo: bool
 ) -> (String, Vec<String>) {
     let mut args = vec!["-I".to_string(), interface.to_string()];
     args.extend(flags.iter().map(|s| s.to_string()));
+    
+    let mut final_cmd = base_cmd.to_string();
+    if use_sudo {
+        args.insert(0, final_cmd);
+        final_cmd = "sudo".to_string();
+    }
 
-    (base_cmd.to_string(), args)
+    (final_cmd, args)
 }
 
 fn select_interface(executor: &dyn CommandExecutor, io: &dyn IoHandler) -> String {

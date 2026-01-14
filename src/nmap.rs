@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::Write;
+
 use chrono::Local;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
@@ -97,7 +97,7 @@ fn select_scan_profile(is_large_network: bool, io: &dyn IoHandler) -> ScanProfil
     )
 }
 
-pub fn run_nmap_scan(target: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: bool, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     let is_root = executor.is_root();
 
     if use_proxy {
@@ -110,7 +110,40 @@ pub fn run_nmap_scan(target: &str, use_proxy: bool, executor: &dyn CommandExecut
 
     // Select Profile
     let is_large_network = target.ends_with("/8");
-    let mut profile = select_scan_profile(is_large_network, io);
+    
+    let mut profile = if let Some(ports) = custom_ports {
+        io.println(&format!("{}", format!("[+] Custom Port Mode: Scanning ports '{}'", ports).cyan()));
+        ScanProfile::new(
+            "Custom Port Scan",
+            "User specified ports.",
+            &["-sV", "-T4"], // Base flags
+            false 
+        )
+    } else {
+        select_scan_profile(is_large_network, io)
+    };
+
+    // Convert profile flags to Vec<String> so we can mutate them
+    let mut profile_flags: Vec<String> = profile.flags.iter().map(|s| s.to_string()).collect();
+
+    // Apply Custom Ports
+    if let Some(ports) = custom_ports {
+        profile_flags.push("-p".to_string());
+        profile_flags.push(ports.to_string());
+    }
+
+    // Apply Skip Discovery (-Pn) to Deep Scan flags as well
+    if skip_discovery {
+        profile_flags.push("-Pn".to_string());
+    }
+
+    // Apply Extra Args to Deep Scan
+    if let Some(extras) = extra_args {
+         for arg in extras.split_whitespace() {
+             profile_flags.push(arg.to_string());
+         }
+    }
+
     let mut use_sudo = false;
 
     if profile.requires_root && !is_root {
@@ -120,30 +153,41 @@ pub fn run_nmap_scan(target: &str, use_proxy: bool, executor: &dyn CommandExecut
         
         if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
              use_sudo = true;
-             // Validate sudo credentials immediately so subsequent commands don't hang/fail hiddenly
-             let status = executor.execute("sudo", &["-v"]);
-            
+             let status = executor.execute("sudo", &["-", "v"]);
              if status.is_err() || !status.unwrap().success() {
                  io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
                  return;
              }
         } else {
-             io.println(&format!("{}", "    - Switching to 'Connect Scan' (-sT) automatically.".yellow()));
-             profile = ScanProfile::new(
-                "Connect Scan (Fallback)",
-                "Non-root fallback. Uses full TCP handshake.",
-                &["-sT", "-sV", "--version-intensity", "5"],
-                false
-            );
+             if custom_ports.is_none() {
+                 io.println(&format!("{}", "    - Switching to Connect Scan (-sT) automatically.".yellow()));
+                 profile = ScanProfile::new(
+                    "Connect Scan (Fallback)",
+                    "Non-root fallback. Uses full TCP handshake.",
+                    &["-sT", "-sV", "--version-intensity", "5"],
+                    false
+                );
+                // Re-init flags from fallback profile
+                profile_flags = profile.flags.iter().map(|s| s.to_string()).collect();
+                if skip_discovery { profile_flags.push("-Pn".to_string()); }
+                if let Some(extras) = extra_args {
+                    for arg in extras.split_whitespace() {
+                        profile_flags.push(arg.to_string());
+                    }
+                }
+             }
         }
     }
     
     io.println(&format!("{}", format!("\n[+] Selected Profile: {}", profile.name).green().bold()));
     io.println(&format!("    {}", profile.description));
+    if let Some(e) = extra_args {
+        io.println(&format!("    Extra Args: {}", e.cyan()));
+    }
 
     let safe_target = target.replace('/', "_");
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let output_dir = format!("scans/{}/{}", safe_target, date);
+    let output_dir = format!("scans/nmap/{}/{}", safe_target, date);
 
     if let Err(e) = fs::create_dir_all(&output_dir) {
         io.println(&format!("{} {}", "[!] Failed to create output directory:".red(), e));
@@ -163,29 +207,44 @@ pub fn run_nmap_scan(target: &str, use_proxy: bool, executor: &dyn CommandExecut
     let host_file = format!("{}/host_discovery.txt", output_dir);
     
     let mut discovery_args = Vec::new();
-    
-    // Root users can use ICMP/ARP ping (-sn -PE etc). Non-root must rely on Connect/TCP ping.
-    // If we are using sudo, we are effectively root.
-    if is_root || use_sudo {
-        discovery_args.push("-sn");
-        if is_large_network {
-            discovery_args.extend_from_slice(&[
-                "-n", "--max-retries", "1", "--min-rate", "1000", "-T4", 
-                "-PE", "-PS443", "-PA80"
-            ]);
-        } else {
-            discovery_args.extend_from_slice(&["-PE", "-PP", "-PM"]);
-        }
-    } else {
-        // Non-root discovery (TCP Connect Ping)
-        discovery_args.extend_from_slice(&["-sn", "-PS80,443,22,8080"]); 
+    let mut has_discovery_override = false;
+
+    if let Some(extras) = extra_args {
+         if extras.contains("-sn") || extras.contains("-P") {
+             has_discovery_override = true;
+         }
     }
     
+    if skip_discovery {
+        discovery_args.push("-Pn");
+    } else if !has_discovery_override {
+        // Root users can use ICMP/ARP ping (-sn -PE etc). Non-root must rely on Connect/TCP ping.
+        if is_root || use_sudo {
+            discovery_args.push("-sn");
+            if is_large_network {
+                discovery_args.extend_from_slice(&[
+                    "-n", "--max-retries", "1", "--min-rate", "1000", "-T4", 
+                    "-PE", "-PS443", "-PA80"
+                ]);
+            } else {
+                discovery_args.extend_from_slice(&["-PE", "-PP", "-PM"]);
+            }
+        } else {
+            discovery_args.extend_from_slice(&["-sn", "-PS80,443,22,8080"]); 
+        }
+    }
+    
+    // Add extra args to discovery too, if they are relevant.
+    if let Some(extras) = extra_args {
+         for arg in extras.split_whitespace() {
+             discovery_args.push(arg);
+         }
+    }
+
     discovery_args.push(target);
     discovery_args.push("-oN");
     discovery_args.push(&host_file);
 
-    // Command Construction: [sudo] [proxychains] nmap [args]
     let mut final_cmd = "nmap";
     let mut final_args: Vec<String> = discovery_args.iter().map(|s| s.to_string()).collect();
 
@@ -199,7 +258,6 @@ pub fn run_nmap_scan(target: &str, use_proxy: bool, executor: &dyn CommandExecut
         final_cmd = "sudo";
     }
 
-    // Convert Vec<String> to Vec<&str> for Command::args
     let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
     let output = executor.execute_output(final_cmd, &final_args_str);
@@ -244,18 +302,38 @@ pub fn run_nmap_scan(target: &str, use_proxy: bool, executor: &dyn CommandExecut
         .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
         .unwrap()
         .progress_chars("=>-"));
+    bar.set_message("Scanning hosts...");
+    bar.enable_steady_tick(std::time::Duration::from_secs(1));
 
-    for host in &alive_hosts {
-        bar.set_message(format!("Scanning {}", host));
-        
-        let scan_file = format!("{}/scan_{}", output_dir, host);
-        let (final_cmd, final_args) = build_nmap_command("nmap", &profile.flags, host, &scan_file, use_proxy, use_sudo);
-        let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
+    let hosts_queue = std::sync::Mutex::new(alive_hosts);
+    let num_threads = if is_large_network { 10 } else { 4 };
 
-        let _ = executor.execute_silent(&final_cmd, &final_args_str);
-        
-        bar.inc(1);
-    }
+    let scan_flags_str: Vec<&str> = profile_flags.iter().map(|s| s.as_str()).collect();
+
+    std::thread::scope(|s| {
+        for _ in 0..num_threads {
+            s.spawn(|| {
+                loop {
+                    let host = {
+                        let mut queue = hosts_queue.lock().unwrap();
+                        queue.pop()
+                    };
+
+                    match host {
+                        Some(h) => {
+                            let scan_file = format!("{}/scan_{}", output_dir, h);
+                            let (final_cmd, final_args) = build_nmap_command("nmap", &scan_flags_str, &h, &scan_file, use_proxy, use_sudo);
+                            let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
+
+                            let _ = executor.execute_silent(&final_cmd, &final_args_str);
+                            bar.inc(1);
+                        }
+                        None => break,
+                    }
+                }
+            });
+        }
+    });
 
     bar.finish_with_message("All scans complete!");
     io.println(&format!("{}", format!("\n[+] Scan completed. Results in {}", output_dir).green()));
