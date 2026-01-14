@@ -298,9 +298,6 @@ fn exploit_active_wrapper(target: &str, extra_args: Option<&str>, use_proxy: boo
     exploit::run_exploitation_tool(target, None, extra_args, use_proxy, executor, io);
 }
 
-fn brute_wrapper(target: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    brute::run_brute_force(target, use_proxy, executor, io);
-}
 fn poison_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     poison::run_poisoning(interface, use_proxy, executor, io);
 }
@@ -315,83 +312,299 @@ fn sniffer_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, execu
 }
 
 pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    let tools = vec![
-        Tool::new("Network Scan - Nmap", "nmap_automator.sh", true, "Enter target IP: ", true, Some(nmap_wrapper)),
-        Tool::new("Web Enumeration - Gobuster", "gobuster.sh", true, "Enter Target URL: ", false, Some(web_wrapper)),
-        Tool::new("Web Fuzzing - Ffuf", "ffuf.sh", true, "Enter Target URL (with FUZZ): ", false, Some(fuzzer_wrapper)),
-        Tool::new("Exploit Search - Searchsploit", "search.sh", true, "Enter Target IP/XML: ", false, Some(exploit_search_wrapper)),
-        Tool::new("Exploitation - Active (SQLMap, etc.)", "exploit.sh", true, "Enter Target URL/IP: ", false, Some(exploit_active_wrapper)),
-        Tool::new("Credential Access - Hydra", "hydra.sh", true, "Enter Target IP: ", false, Some(brute_wrapper)),
-        Tool::new("LAN Poisoning - Responder", "responder.sh", true, "Enter Interface: ", true, Some(poison_wrapper)),
-        Tool::new("WiFi Audit - Wifite", "wifi_audit.sh", true, "Enter Interface: ", true, Some(wifi_wrapper)),
-        Tool::new("Packet Sniffer - Tcpdump", "packet_sniffer.sh", true, "Enter Interface: ", true, Some(sniffer_wrapper)),
-        Tool::new("Bluetooth Arsenal", "bluetooth.sh", true, "Enter Target MAC (Optional): ", false, Some(bluetooth_wrapper)),
+
+    let main_menu = vec![
+
+        Tool::new("Network Recon (Nmap)", "nmap_automator.sh", true, "Enter target IP: ", true, Some(nmap_wrapper)),
+
+        Tool::new("Web Arsenal (Gobuster, Ffuf)", "", false, "", false, Some(web_category)),
+
+        Tool::new("Exploitation Hub (Search, Active, Hydra)", "", false, "", false, Some(exploit_category)),
+
+        Tool::new("Network Operations (Sniffer, Poison)", "", false, "", false, Some(netops_category)),
+
+        Tool::new("Wireless & RF (WiFi, Bluetooth)", "", false, "", false, Some(wireless_category)),
+
     ];
 
+
+
     loop {
+
         clear_screen();
+
         print_banner(io);
+
         
+
         let proxy_status = if use_proxy { "ON".magenta().bold() } else { "OFF".dimmed() };
+
         io.println(&format!("              Proxychains: [{}]\n", proxy_status));
 
-        for (i, tool) in tools.iter().enumerate() {
+
+
+        for (i, tool) in main_menu.iter().enumerate() {
+
             io.println(&format!("[{}] {}", i + 1, tool.name));
+
         }
-        io.println(&format!("[{}] View Scan Results", tools.len() + 1));
-        io.println(&format!("[{}] View History", tools.len() + 2));
-        io.println(&format!("[{}] Toggle Proxychains", tools.len() + 3));
-        io.println(&format!("[{}] Exit", tools.len() + 4));
+
+        io.println(&format!("[{}] View Scan Results", main_menu.len() + 1));
+
+        io.println(&format!("[{}] View History", main_menu.len() + 2));
+
+        io.println(&format!("[{}] Toggle Proxychains", main_menu.len() + 3));
+
+        io.println(&format!("[{}] Exit", main_menu.len() + 4));
+
         
+
         io.print(&format!("\n{}", "Select an option: ".green()));
+
         io.flush();
 
+
+
         let choice_str = io.read_line();
+
         if choice_str.is_empty() { break; } 
+
         
+
         if let Ok(choice_idx) = choice_str.trim().parse::<usize>() {
-            if choice_idx > 0 && choice_idx <= tools.len() {
-                let tool = &tools[choice_idx - 1];
+
+            if choice_idx > 0 && choice_idx <= main_menu.len() {
+
+                let tool = &main_menu[choice_idx - 1];
+
                 let mut arg = String::new();
-                // let mut extra_args: Option<String> = None;
+
                 
+
                 if tool.needs_arg {
+
                     io.print(&format!("{}", tool.arg_prompt));
+
                     io.flush();
+
                     let input = io.read_line();
+
                     arg = input.trim().to_string();
+
                     if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
+
                          continue;
+
                     }
-                }
-                
-                if let Some(func) = tool.function {
-                    func(&arg, None, use_proxy, executor, io);
-                    io.print("\nPress Enter to return to menu...");
-                    io.flush();
-                    let _ = io.read_line();
-                } else {
-                    run_legacy_script(&tool.script, &arg, tool.use_sudo, executor, io);
+
                 }
 
-            } else if choice_idx == tools.len() + 1 {
+                
+
+                if let Some(func) = tool.function {
+
+                    func(&arg, None, use_proxy, executor, io);
+
+                    if tool.name.contains("Nmap") { // Only pause for standalone tools, menus handle themselves
+
+                        io.print("\nPress Enter to return to menu...");
+
+                        io.flush();
+
+                        let _ = io.read_line();
+
+                    }
+
+                }
+
+
+
+            } else if choice_idx == main_menu.len() + 1 {
+
                 view_scan_results(io);
-            } else if choice_idx == tools.len() + 2 {
+
+            } else if choice_idx == main_menu.len() + 2 {
+
                 print_history(io);
+
                 io.print("\nPress Enter to return...");
+
                 io.flush();
+
                 let _ = io.read_line();
-            } else if choice_idx == tools.len() + 3 {
+
+            } else if choice_idx == main_menu.len() + 3 {
+
                 use_proxy = !use_proxy;
-            } else if choice_idx == tools.len() + 4 {
+
+            } else if choice_idx == main_menu.len() + 4 {
+
                 io.println("\nExiting. Stay safe!");
+
                 break;
+
             } else {
+
                 io.println(&format!("{}", "[!] Invalid choice.".red()));
+
                 std::thread::sleep(std::time::Duration::from_secs(1));
+
             }
+
         }
+
     }
+
+}
+
+
+
+// --- Category Wrappers ---
+
+
+
+fn web_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+
+    let tools = vec![
+
+        Tool::new("Web Enumeration - Gobuster", "gobuster.sh", true, "Enter Target URL: ", false, Some(web_wrapper)),
+
+        Tool::new("Web Fuzzing - Ffuf", "ffuf.sh", true, "Enter Target URL (with FUZZ): ", false, Some(fuzzer_wrapper)),
+
+    ];
+
+    show_submenu("Web Arsenal", tools, use_proxy, executor, io);
+
+}
+
+
+
+fn exploit_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+
+    let tools = vec![
+
+        Tool::new("Exploit Search - Searchsploit", "search.sh", true, "Enter Search Query or Target IP/XML: ", false, Some(exploit_search_wrapper)),
+
+        Tool::new("Active Exploitation (SQLMap, Curl, Hydra)", "exploit.sh", false, "", false, Some(exploit_active_wrapper)),
+
+    ];
+
+    show_submenu("Exploitation Hub", tools, use_proxy, executor, io);
+
+}
+
+
+
+fn netops_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+
+    let tools = vec![
+
+        Tool::new("Packet Sniffer - Tcpdump", "packet_sniffer.sh", false, "", true, Some(sniffer_wrapper)),
+
+        Tool::new("LAN Poisoning - Responder", "responder.sh", true, "Enter Interface: ", true, Some(poison_wrapper)),
+
+    ];
+
+    show_submenu("Network Operations", tools, use_proxy, executor, io);
+
+}
+
+
+
+fn wireless_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+
+    let tools = vec![
+
+        Tool::new("WiFi Audit - Wifite", "wifi_audit.sh", true, "Enter Interface: ", true, Some(wifi_wrapper)),
+
+        Tool::new("Bluetooth Arsenal", "bluetooth.sh", true, "Enter Target MAC (Optional): ", false, Some(bluetooth_wrapper)),
+
+    ];
+
+    show_submenu("Wireless & RF", tools, use_proxy, executor, io);
+
+}
+
+
+
+fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+
+    loop {
+
+        clear_screen();
+
+        io.println(&format!("\n--- {} ---", title.cyan().bold()));
+
+        for (i, tool) in tools.iter().enumerate() {
+
+            io.println(&format!("[{}] {}", i + 1, tool.name));
+
+        }
+
+        io.println("[0] Back to Main Menu");
+
+
+
+        io.print(&format!("\n{}", "Select an option: ".green()));
+
+        io.flush();
+
+
+
+        let choice_str = io.read_line();
+
+        let choice_idx = choice_str.trim().parse::<usize>().unwrap_or(99);
+
+
+
+        if choice_idx == 0 { break; }
+
+
+
+        if choice_idx > 0 && choice_idx <= tools.len() {
+
+            let tool = &tools[choice_idx - 1];
+
+            let mut arg = String::new();
+
+
+
+            if tool.needs_arg {
+
+                io.print(&format!("{}", tool.arg_prompt));
+
+                io.flush();
+
+                let input = io.read_line();
+
+                arg = input.trim().to_string();
+
+                if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
+
+                     continue;
+
+                }
+
+            }
+
+
+
+            if let Some(func) = tool.function {
+
+                func(&arg, None, use_proxy, executor, io);
+
+                io.print("\nPress Enter to return to menu...");
+
+                io.flush();
+
+                let _ = io.read_line();
+
+            }
+
+        }
+
+    }
+
 }
 
 fn view_scan_results(io: &dyn IoHandler) {
@@ -527,6 +740,13 @@ fn view_scan_results(io: &dyn IoHandler) {
 }
 
 fn main() {
+    // Global signal handler to prevent exit on Ctrl+C
+    // This allows child processes (like tcpdump) to handle the signal and exit,
+    // while the parent (purpl) stays alive and returns to menu.
+    let _ = ctrlc::set_handler(move || {
+        println!("\n{}", "^C Received".dimmed());
+    });
+
     let cli = Cli::parse();
     let executor = ShellExecutor;
     let io = RealIoHandler;

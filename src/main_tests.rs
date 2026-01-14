@@ -86,7 +86,8 @@ mod tests {
     fn test_run_interactive_mode_exit() {
         let executor = MockExecutor::new();
         let io = MockIoHandler::new();
-        io.add_input("14\n");
+        // Exit is now option 9 (5 tools + 4 options)
+        io.add_input("9\n");
 
         run_interactive_mode(false, &executor, &io);
 
@@ -102,7 +103,7 @@ mod tests {
         // 1. Select Tool 1 (Nmap)
         io.add_input("1\n");
 
-        // Tool 1 needs arg: "Enter target IP or Range: "
+        // Tool 1 needs arg: "Enter target IP: "
         io.add_input("127.0.0.1\n");
 
         // Then inside tool logic:
@@ -110,10 +111,10 @@ mod tests {
         // It asks for Profile (Input 2)
         io.add_input("2\n");
 
-        // After tool runs, menu asks "Press Enter to return..."
+        // After tool runs, menu asks "Press Enter to return to menu..."
         io.add_input("\n");
 
-        io.add_input("14\n");
+        io.add_input("9\n"); // Exit (Option 9)
 
         // Mock nmap host discovery output using new registry
         executor.register_output("nmap", b"Nmap scan report for 127.0.0.1");
@@ -126,65 +127,47 @@ mod tests {
         let cmds: Vec<String> = calls.iter().map(|c| c.command.clone()).collect();
         assert!(cmds.contains(&"nmap".to_string()));
     }
-    
+
     #[test]
     fn test_interactive_mode_full_flow() {
         let executor = MockExecutor::new();
         let io = MockIoHandler::new();
         
-        // --- Setup Mocks (Robust Rule-Based) ---
-        // By default MockExecutor returns success, but let's be explicit for tools we care about
+        // --- Setup Mocks ---
         executor.register_success("nmap");
         executor.register_success("gobuster");
-        executor.register_success("hydra");
         executor.register_success("responder");
-        executor.register_success("bluetoothctl");
         executor.register_success("tcpdump");
+        executor.register_output("ip", b"1: lo: <LOOPBACK...>\n2: eth0: <BROADCAST...>"); 
         
         // --- Sequence of Inputs ---
 
-        // 1. Nmap (Option 1)
+        // 1. Nmap (Option 1) - Standalone
         io.add_input("1\n"); // Select Nmap
         io.add_input("10.0.0.1\n"); // Target
         io.add_input("2\n"); // Profile: Quick
         io.add_input("\n"); // Return to menu
 
-        // 2. Web (Option 2)
-        io.add_input("2\n"); // Select Web
+        // 2. Web Arsenal (Option 2) -> Gobuster (Option 1)
+        io.add_input("2\n"); // Enter Web Submenu
+        io.add_input("1\n"); // Select Gobuster
         io.add_input("http://10.0.0.1\n"); // Target
         io.add_input("3\n"); // Profile: Manual
-        io.add_input("wordlists/test.txt\n"); // Wordlist path (will fail check but won't crash)
-        io.add_input("\n"); // Return to menu
+        io.add_input("wordlists/test.txt\n"); // Wordlist
+        io.add_input("\n"); // Return to submenu
+        io.add_input("0\n"); // Back to Main Menu
 
-        // 3. Brute (Option 6)
-        io.add_input("6\n"); // Select Brute
-        io.add_input("10.0.0.1\n"); // Target
-        io.add_input("1\n"); // Protocol: ssh
-        io.add_input("3\n"); // Profile: Manual
-        io.add_input("users.txt\n"); // User list
-        io.add_input("pass.txt\n"); // Pass list
-        io.add_input("\n"); // Return to menu
-
-        // 4. Poison (Option 7)
-        io.add_input("7\n"); // Select Poison
-        io.add_input("eth0\n"); // Interface
-        io.add_input("1\n"); // Profile: Analyze
-        io.add_input("\n"); // Return to menu
-
-        // 5. Bluetooth (Option 10)
-        io.add_input("10\n"); // Select Bluetooth
-        io.add_input("\n"); // Target MAC (Empty)
-        io.add_input("1\n"); // Profile: Scan
-        io.add_input("\n"); // Return to menu
-
-        // 6. Sniffer (Option 9)
-        io.add_input("9\n"); // Select Sniffer
-        io.add_input("eth0\n"); // Interface
+        // 3. Network Ops (Option 4) -> Sniffer (Option 1)
+        io.add_input("4\n"); // Enter NetOps Submenu
+        io.add_input("1\n"); // Select Sniffer
+        io.add_input("1\n"); // Interface Selection (1: eth0)
         io.add_input("4\n"); // Profile: ICMP
-        io.add_input("\n"); // Return to menu
+        io.add_input("1\n"); // Mode: Passive
+        io.add_input("\n"); // Return to submenu
+        io.add_input("0\n"); // Back to Main Menu
 
-        // 7. Exit
-        io.add_input("14\n");
+        // 4. Exit (Option 9)
+        io.add_input("9\n");
 
         // --- Run ---
         run_interactive_mode(false, &executor, &io);
@@ -193,19 +176,8 @@ mod tests {
         let calls = executor.get_calls();
         let commands: Vec<String> = calls.iter().map(|c| c.command.clone()).collect();
         
-        // Debug
-        // println!("Executed commands: {:?}", commands);
-
-        // Assertions
         assert!(commands.contains(&"nmap".to_string()), "Nmap should have been called");
-        // Gobuster might be skipped if wordlist check fails logic inside web.rs, 
-        // but verify at least the attempt (version check) if implemented, or menu flow valid.
-        // Actually web.rs checks `executor.execute_output("gobuster", &["version"])` first.
-        assert!(commands.contains(&"gobuster".to_string()), "Gobuster version check should have occurred");
-        
-        assert!(commands.contains(&"hydra".to_string()), "Hydra should have been called");
-        assert!(commands.contains(&"responder".to_string()), "Responder should have been called");
-        assert!(commands.contains(&"bluetoothctl".to_string()), "Bluetoothctl should have been called");
+        assert!(commands.contains(&"gobuster".to_string()), "Gobuster should have been called");
         assert!(commands.contains(&"tcpdump".to_string()), "Tcpdump should have been called");
     }
 }

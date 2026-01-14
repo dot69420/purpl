@@ -1,11 +1,12 @@
-
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::fs;
 use chrono::Local;
 use colored::*;
 use crate::history::{append_history, HistoryEntry};
 use crate::executor::CommandExecutor;
 use crate::io_handler::IoHandler;
+use crate::nmap;
+use crate::report;
 
 #[derive(Debug, Clone)]
 pub struct BruteProfile {
@@ -28,50 +29,61 @@ impl BruteProfile {
     }
 }
 
-// Reuse helper to find valid wordlist (similar to web.rs)
-fn find_wordlist(candidates: &[&str]) -> Option<String> {
-    for path in candidates {
-        if Path::new(path).exists() {
-            return Some(path.to_string());
-        }
-    }
-    None
-}
-
-pub fn run_brute_force(target: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    // 1. Validation
+pub fn run_brute_force(target_input: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+    // 1. Check dependency
     if executor.execute_output("hydra", &["-h"]).is_err() {
         io.println(&format!("{}", "[-] 'hydra' not found. Please install it (sudo pacman -S hydra).".red()));
         return;
     }
 
-    if target.trim().is_empty() {
-        io.println(&format!("{}", "[!] Target cannot be empty.".red()));
-        return;
-    }
+    io.println(&format!("\n{}", "--- Credential Access Module (Hydra) ---".red().bold()));
 
-    // 2. Select Protocol
-    io.println(&format!("\n{}", "Select Target Protocol:".blue().bold()));
-    let protocols = vec!["ssh", "ftp", "telnet", "rdp", "mysql", "postgresql"];
-    for (i, p) in protocols.iter().enumerate() {
-        io.println(&format!("[{}] {}", i + 1, p));
-    }
-    
-    io.print(&format!("\nChoose protocol [1-{}]: ", protocols.len()));
-    io.flush();
-    let p_in = io.read_line();
-    
-    let protocol = if let Ok(idx) = p_in.trim().parse::<usize>() {
-        if idx > 0 && idx <= protocols.len() {
-            protocols[idx - 1]
+    // 2. Select Target
+    let final_target = if target_input.is_empty() {
+        if let Some(t) = select_target_or_scan(use_proxy, executor, io) {
+            io.println(&format!("{} {}", "[*] Target set to:".blue(), t.yellow().bold()));
+            t
         } else {
-            "ssh"
+            return;
         }
     } else {
-        "ssh"
+        target_input.to_string()
     };
 
-    // 3. Resolve Wordlists
+    // 3. Detect Services
+    let detected_services = detect_services(&final_target, io);
+    let selected_protocol;
+    let mut selected_port = "22".to_string(); // default
+
+    if !detected_services.is_empty() {
+        io.println(&format!("\n{}", "Detected Services (from Nmap):".green().bold()));
+        for (i, svc) in detected_services.iter().enumerate() {
+            io.println(&format!("[{}] {} ({}/{}) - {}", i + 1, svc.name, svc.port, svc.protocol, svc.version));
+        }
+        io.println(&format!("[{}] Manual Protocol Selection", detected_services.len() + 1));
+
+        io.print("\nSelect target service: ");
+        io.flush();
+        let input = io.read_line();
+        if let Ok(idx) = input.trim().parse::<usize>() {
+            if idx > 0 && idx <= detected_services.len() {
+                let svc = &detected_services[idx - 1];
+                selected_protocol = svc.name.clone();
+                selected_port = svc.port.clone();
+            } else {
+                // Manual selection fallback
+                 selected_protocol = manual_protocol_selection(io);
+            }
+        } else {
+             // Default or invalid
+             selected_protocol = manual_protocol_selection(io);
+        }
+    } else {
+        io.println(&format!("\n{}", "[-] No Nmap data found. Proceeding with manual selection.".dimmed()));
+        selected_protocol = manual_protocol_selection(io);
+    }
+
+    // 4. Resolve Wordlists
     // Common Usernames
     let user_list_path = find_wordlist(&[
         "/usr/share/seclists/Usernames/top-usernames-shortlist.txt",
@@ -88,7 +100,7 @@ pub fn run_brute_force(target: &str, use_proxy: bool, executor: &dyn CommandExec
         "wordlists/passwords.txt"
     ]).unwrap_or_else(|| "manual".to_string());
 
-    // 4. Define Profiles
+    // 5. Define Profiles
     let mut profiles = Vec::new();
 
     if user_list_path != "manual" && pass_list_path != "manual" {
@@ -97,7 +109,7 @@ pub fn run_brute_force(target: &str, use_proxy: bool, executor: &dyn CommandExec
             "Top usernames vs Top passwords. Fast check for weak creds.",
             &user_list_path,
             &pass_list_path,
-            &["-t", "-I"] // -I to ignore existing restore file
+            &["-t", "4", "-I"] // -I to ignore existing restore file
         ));
     }
 
@@ -117,7 +129,7 @@ pub fn run_brute_force(target: &str, use_proxy: bool, executor: &dyn CommandExec
         &["-t", "4"]
     ));
 
-    // 5. Select Profile
+    // 6. Select Profile
     io.println(&format!("\n{}", "Select Attack Profile:".blue().bold()));
     for (i, p) in profiles.iter().enumerate() {
         io.println(&format!("[{}] {} - {}", i + 1, p.name.green(), p.description));
@@ -161,48 +173,57 @@ pub fn run_brute_force(target: &str, use_proxy: bool, executor: &dyn CommandExec
          let path = io.read_line();
          selected_profile.passlist = path.trim().to_string();
     }
-    let pass_arg = "-P".to_string(); // Big P for list (usually) - wait, hydra uses -P for list, -p for single
+    let pass_arg = "-P".to_string(); 
 
-    // 6. Setup Output
-    let safe_target = target.replace("://", "_").replace('/', "_");
+    // 7. Setup Output
+    let safe_target = final_target.replace("://", "_").replace('/', "_");
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let output_dir = format!("scans/brute/{}/{}", safe_target, date);
     fs::create_dir_all(&output_dir).expect("Failed to create output dir");
     let output_file = format!("{}/hydra.txt", output_dir);
 
-    io.println(&format!("{}", format!("\n[+] Starting Hydra on {}://{}", protocol, target).green()));
+    // If port differs from default, append it to protocol
+    let protocol_str = if !selected_port.is_empty() && is_non_standard_port(&selected_protocol, &selected_port) {
+         format!("{}://{}:{}", selected_protocol, final_target, selected_port)
+    } else {
+         format!("{}://{}", selected_protocol, final_target)
+    };
+    
+    // Hydra argument adjustment for port
+    let flags = selected_profile.flags.clone();
+
+    io.println(&format!("{}", format!("\n[+] Starting Hydra on {}", protocol_str).green()));
     io.println(&format!("[+] Saving output to: {}", output_file));
 
-    // 7. Execute
+    // 8. Execute
     let (final_cmd, final_args) = build_hydra_command(
         "hydra",
-        &selected_profile.flags,
+        &flags,
         &user_arg,
         &selected_profile.userlist,
         &pass_arg,
         &selected_profile.passlist,
         &output_file,
-        target,
-        protocol,
+        &final_target,
+        &selected_protocol,
+        &selected_port, // Pass port
         use_proxy
     );
     let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
-    // Hydra outputs to stderr largely for status, stdout for found
     let status = executor.execute(&final_cmd, &final_args_str);
 
     match status {
         Ok(s) => {
             if s.success() {
-                // Check if output file has content (successes)
                 if let Ok(content) = fs::read_to_string(&output_file) {
                     if !content.trim().is_empty() {
                          io.println(&format!("{}", "\n[+] Credentials Found!".green().bold()));
                          io.println(&content);
-                         let _ = append_history(&HistoryEntry::new("BruteForce", target, "CRACKED"));
+                         let _ = append_history(&HistoryEntry::new("BruteForce", &final_target, "CRACKED"));
                     } else {
                          io.println(&format!("{}", "\n[-] No credentials found.".yellow()));
-                         let _ = append_history(&HistoryEntry::new("BruteForce", target, "Failed"));
+                         let _ = append_history(&HistoryEntry::new("BruteForce", &final_target, "Failed"));
                     }
                 }
             } else {
@@ -211,6 +232,155 @@ pub fn run_brute_force(target: &str, use_proxy: bool, executor: &dyn CommandExec
         },
         Err(e) => io.println(&format!("{} {}", "[!] Failed to start process:".red(), e)),
     }
+}
+
+fn select_target_or_scan(use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<String> {
+    let nmap_dir = Path::new("scans").join("nmap");
+    let mut targets: Vec<String> = Vec::new();
+
+    if nmap_dir.exists() {
+        if let Ok(entries) = fs::read_dir(nmap_dir) {
+            for entry in entries.flatten() {
+                if let Ok(ft) = entry.file_type() {
+                    if ft.is_dir() {
+                        if let Ok(name) = entry.file_name().into_string() {
+                             targets.push(name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    targets.sort();
+
+    io.println(&format!("\n{}", "Target Selection:".cyan().bold()));
+    if targets.is_empty() {
+        io.println(&format!("{}", "  (No previous Nmap scans found)".dimmed()));
+    } else {
+        for (i, t) in targets.iter().enumerate() {
+            io.println(&format!("[{}] {}", i + 1, t));
+        }
+    }
+
+    let scan_option_idx = targets.len() + 1;
+    let manual_option_idx = targets.len() + 2;
+
+    io.println(&format!("[{}] {}", scan_option_idx, "New Target (Run Nmap Scan first)".green()));
+    io.println(&format!("[{}] {}", manual_option_idx, "New Target (Manual Input)".yellow()));
+    io.println("[0] Back");
+
+    io.print("\nSelect option: ");
+    io.flush();
+    let input = io.read_line();
+    let choice = input.trim().parse::<usize>().unwrap_or(999);
+
+    if choice == 0 { return None; }
+
+    if choice > 0 && choice <= targets.len() {
+        return Some(targets[choice - 1].clone());
+    } else if choice == scan_option_idx {
+        io.print("\nEnter Target IP for Scan: ");
+        io.flush();
+        let new_target = io.read_line().trim().to_string();
+        if new_target.is_empty() { return None; }
+        
+        io.println(&format!("{}", "\n[+] Redirecting to Network Scan module...".blue()));
+        nmap::run_nmap_scan(&new_target, None, false, None, use_proxy, executor, io);
+        return Some(new_target);
+    } else if choice == manual_option_idx {
+        io.print("Enter Target IP: ");
+        io.flush();
+        let manual = io.read_line().trim().to_string();
+        if manual.is_empty() { return None; }
+        return Some(manual);
+    }
+
+    io.println(&format!("{}", "[!] Invalid selection.".red()));
+    None
+}
+
+fn detect_services(target: &str, io: &dyn IoHandler) -> Vec<report::ServiceInfo> {
+    // 1. Resolve XML path (reusing logic conceptually, but implementing simply)
+    // Try scans/nmap/<target>/nmap.xml (standard path)
+    // Or iterate directories if needed, but standard path is best.
+    let target_safe = target.replace('/', "_");
+    let scan_dir = Path::new("scans").join("nmap").join(&target_safe);
+
+    if !scan_dir.exists() { return Vec::new(); }
+
+    // Find XML
+    let mut xml_path: Option<PathBuf> = None;
+    if let Ok(entries) = fs::read_dir(&scan_dir) {
+        for entry in entries.flatten() {
+            if entry.path().extension().map_or(false, |e| e == "xml") {
+                xml_path = Some(entry.path());
+                break;
+            }
+        }
+    }
+
+    if let Some(path) = xml_path {
+        if let Ok(content) = fs::read_to_string(path) {
+             let hosts = report::parse_nmap_xml(&content, io);
+             // Flatten services from all hosts (usually just one)
+             let mut all_services = Vec::new();
+             for h in hosts {
+                 for s in h.services {
+                     if !s.name.is_empty() && s.name != "unknown" {
+                         all_services.push(s);
+                     }
+                 }
+             }
+             return all_services;
+        }
+    }
+    Vec::new()
+}
+
+fn manual_protocol_selection(io: &dyn IoHandler) -> String {
+    io.println(&format!("\n{}", "Select Target Protocol:".blue().bold()));
+    let protocols = vec!["ssh", "ftp", "telnet", "rdp", "mysql", "postgresql", "smb", "http-get", "http-post-form"];
+    for (i, p) in protocols.iter().enumerate() {
+        io.println(&format!("[{}] {}", i + 1, p));
+    }
+    
+    io.print(&format!("\nChoose protocol [1-{}]: ", protocols.len()));
+    io.flush();
+    let p_in = io.read_line();
+    
+    if let Ok(idx) = p_in.trim().parse::<usize>() {
+        if idx > 0 && idx <= protocols.len() {
+            protocols[idx - 1].to_string()
+        } else {
+            "ssh".to_string()
+        }
+    } else {
+        "ssh".to_string()
+    }
+}
+
+// Helper to check if port is non-standard for protocol
+fn is_non_standard_port(proto: &str, port: &str) -> bool {
+    match proto {
+        "ssh" => port != "22",
+        "ftp" => port != "21",
+        "telnet" => port != "23",
+        "http" | "http-get" => port != "80",
+        "https" => port != "443",
+        "rdp" => port != "3389",
+        "mysql" => port != "3306",
+        "postgresql" => port != "5432",
+        _ => true
+    }
+}
+
+fn find_wordlist(candidates: &[&str]) -> Option<String> {
+    for path in candidates {
+        if Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+    None
 }
 
 pub fn build_hydra_command(
@@ -223,6 +393,7 @@ pub fn build_hydra_command(
     output_file: &str,
     target: &str,
     protocol: &str,
+    port: &str,
     use_proxy: bool
 ) -> (String, Vec<String>) {
     let mut cmd_args: Vec<String> = flags.iter().map(|s| s.to_string()).collect();
@@ -235,6 +406,12 @@ pub fn build_hydra_command(
 
     cmd_args.push("-o".to_string());
     cmd_args.push(output_file.to_string());
+    
+    // Port argument
+    if !port.is_empty() && is_non_standard_port(protocol, port) {
+        cmd_args.push("-s".to_string());
+        cmd_args.push(port.to_string());
+    }
 
     cmd_args.push(target.to_string());
     cmd_args.push(protocol.to_string());

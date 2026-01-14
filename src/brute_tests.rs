@@ -37,6 +37,7 @@ mod tests {
             "out.txt",
             "192.168.1.1",
             "ssh",
+            "",
             false
         );
 
@@ -58,6 +59,7 @@ mod tests {
             "out.txt",
             "10.0.0.1",
             "ftp",
+            "",
             true
         );
 
