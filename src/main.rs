@@ -15,7 +15,6 @@ pub mod io_handler;
 
 use clap::{Parser, Subcommand};
 use std::process::Command;
-use std::path::Path;
 
 use colored::*;
 
@@ -315,7 +314,7 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
 
     let main_menu = vec![
 
-        Tool::new("Network Recon (Nmap)", "nmap_automator.sh", true, "Enter target IP: ", true, Some(nmap_wrapper)),
+        Tool::new("Network Recon (Nmap & Discovery)", "", false, "", false, Some(recon_category)),
 
         Tool::new("Web Arsenal (Gobuster, Ffuf)", "", false, "", false, Some(web_category)),
 
@@ -349,7 +348,7 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
 
         }
 
-        io.println(&format!("[{}] View Scan Results", main_menu.len() + 1));
+        io.println(&format!("[{}] Results Viewer", main_menu.len() + 1));
 
         io.println(&format!("[{}] View History", main_menu.len() + 2));
 
@@ -381,23 +380,51 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
 
                 
 
-                if tool.needs_arg {
+                                if tool.needs_arg {
 
-                    io.print(&format!("{}", tool.arg_prompt));
+                
 
-                    io.flush();
+                                    let last_target = history::get_last_target();
 
-                    let input = io.read_line();
+                
 
-                    arg = input.trim().to_string();
+                                    let prompt = tool.arg_prompt.trim_end();
 
-                    if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
+                
 
-                         continue;
+                                    arg = io.read_input(prompt, last_target.as_deref());
 
-                    }
+                
 
-                }
+                                    
+
+                
+
+                                    if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
+
+                
+
+                                         continue;
+
+                
+
+                                    }
+
+                
+
+                                    if !arg.is_empty() && (prompt.contains("target") || prompt.contains("Target")) {
+
+                
+
+                                        history::save_last_target(&arg);
+
+                
+
+                                    }
+
+                
+
+                                }
 
                 
 
@@ -405,7 +432,7 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
 
                     func(&arg, None, use_proxy, executor, io);
 
-                    if tool.name.contains("Nmap") { // Only pause for standalone tools, menus handle themselves
+                    if tool.name.contains("Standalone") { // Only pause for standalone tools if needed
 
                         io.print("\nPress Enter to return to menu...");
 
@@ -421,7 +448,7 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
 
             } else if choice_idx == main_menu.len() + 1 {
 
-                view_scan_results(io);
+                report::view_results(io);
 
             } else if choice_idx == main_menu.len() + 2 {
 
@@ -460,6 +487,22 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
 
 
 // --- Category Wrappers ---
+
+
+
+fn recon_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+
+    let tools = vec![
+
+        Tool::new("Nmap Automator (Standard)", "nmap_automator.sh", true, "Enter target IP: ", true, Some(nmap_wrapper)),
+
+        // We can add more specific Nmap profiles here as shortcuts if needed in future
+
+    ];
+
+    show_submenu("Network Recon", tools, use_proxy, executor, io);
+
+}
 
 
 
@@ -569,23 +612,51 @@ fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: &dyn C
 
 
 
-            if tool.needs_arg {
+                        if tool.needs_arg {
 
-                io.print(&format!("{}", tool.arg_prompt));
 
-                io.flush();
 
-                let input = io.read_line();
+                            let last_target = history::get_last_target();
 
-                arg = input.trim().to_string();
 
-                if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
 
-                     continue;
+                            let prompt = tool.arg_prompt.trim_end();
 
-                }
 
-            }
+
+                            arg = io.read_input(prompt, last_target.as_deref());
+
+
+
+                            
+
+
+
+                            if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
+
+
+
+                                 continue;
+
+
+
+                            }
+
+
+
+                            if !arg.is_empty() && (prompt.contains("target") || prompt.contains("Target")) {
+
+
+
+                                history::save_last_target(&arg);
+
+
+
+                            }
+
+
+
+                        }
 
 
 
@@ -603,143 +674,13 @@ fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: &dyn C
 
         }
 
+        }
+
     }
 
-}
-
-fn view_scan_results(io: &dyn IoHandler) {
-    // ... (Same as before, simplified for this rewrite since I have to overwrite main.rs)
-    // Actually, I should probably reuse the existing view_scan_results code.
-    // But since I am overwriting the file, I need to make sure I include it.
-    // The previous read_file showed the full content, so I am safe to paste it.
     
-    if !Path::new("scans").exists() {
-        io.println(&format!("{}", "[!] No scans found yet.".yellow()));
-        return;
-    }
 
-    loop {
-        let tools_dir = match std::fs::read_dir("scans") {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-        let mut tool_folders: Vec<_> = tools_dir.flatten()
-            .filter(|e| e.path().is_dir())
-            .collect();
-        tool_folders.sort_by_key(|t| t.file_name());
-
-        if tool_folders.is_empty() {
-             io.println(&format!("{}", "No scan data found.".yellow()));
-             return;
-        }
-
-        io.println(&format!("\n{}", "--- Scan Results Viewer ---".cyan().bold()));
-        io.println(&format!("{}", "Select Tool Category:".blue().bold()));
-        io.println("0. Back to Main Menu");
-        for (i, tool) in tool_folders.iter().enumerate() {
-            io.println(&format!("[{}] {}", i + 1, tool.file_name().to_string_lossy()));
-        }
-        
-        io.print("\nSelect tool: ");
-        io.flush();
-        let t_in = io.read_line();
-        let t_idx = t_in.trim().parse::<usize>().unwrap_or(9999);
-
-        if t_idx == 0 { break; }
-        if t_idx > tool_folders.len() { continue; }
-
-        let selected_tool = &tool_folders[t_idx - 1];
-        let tool_path = selected_tool.path();
-
-        loop {
-            let mut next_level_items: Vec<_> = std::fs::read_dir(&tool_path).unwrap()
-                .flatten()
-                .filter(|e| e.path().is_dir())
-                .collect();
-            
-            if next_level_items.is_empty() {
-                 io.println(&format!("{}", "[!] No records found.".yellow()));
-                 break;
-            }
-
-            let is_dates_only = next_level_items.iter().all(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                name.len() >= 8 && name.chars().take(8).all(|c| c.is_digit(10))
-            });
-
-            if is_dates_only {
-                next_level_items.sort_by_key(|e| e.file_name());
-                next_level_items.reverse();
-            } else {
-                 next_level_items.sort_by_key(|e| e.file_name());
-            }
-
-            io.println(&format!("\n{}", format!("-- {} > Records --", selected_tool.file_name().to_string_lossy()).cyan()));
-            if is_dates_only {
-                 io.println(&format!("{}", "Select Scan Date:".blue().bold()));
-            } else {
-                 io.println(&format!("{}", "Select Target:".blue().bold()));
-            }
-            io.println("0. Back");
-            
-            for (i, item) in next_level_items.iter().enumerate() {
-                 let name = item.file_name().to_string_lossy().to_string();
-                 io.println(&format!("[{}] {}", i + 1, name));
-            }
-
-            io.print("\nSelect: ");
-            io.flush();
-            let item_in = io.read_line();
-            let item_idx = item_in.trim().parse::<usize>().unwrap_or(9999);
-
-            if item_idx == 0 { break; }
-            if item_idx > next_level_items.len() { continue; }
-            
-            let selected_item = &next_level_items[item_idx - 1];
-
-            if is_dates_only {
-                report::display_scan_report(&selected_item.path(), io);
-                io.print("\nPress Enter to continue...");
-                io.flush();
-                let _ = io.read_line();
-            } else {
-                loop {
-                    let mut dates: Vec<_> = std::fs::read_dir(selected_item.path()).unwrap()
-                        .flatten()
-                        .filter(|e| e.path().is_dir())
-                        .collect();
-                    
-                    if dates.is_empty() { break; }
-
-                    dates.sort_by_key(|d| d.file_name());
-                    dates.reverse();
-
-                    io.println(&format!("\n{}", format!("-- {} > {} > Scans --", selected_tool.file_name().to_string_lossy(), selected_item.file_name().to_string_lossy()).cyan()));
-                    io.println("0. Back");
-
-                    for (j, date) in dates.iter().enumerate() {
-                        io.println(&format!("[{}] {}", j + 1, date.file_name().to_string_lossy()));
-                    }
-
-                    io.print("\nSelect scan date: ");
-                    io.flush();
-                    let d_in = io.read_line();
-                    let d_idx = d_in.trim().parse::<usize>().unwrap_or(9999);
-
-                    if d_idx == 0 { break; }
-                    if d_idx > dates.len() { continue; }
-
-                    report::display_scan_report(&dates[d_idx - 1].path(), io);
-                    io.print("\nPress Enter to continue...");
-                    io.flush();
-                    let _ = io.read_line();
-                }
-            }
-        }
-    }
-}
-
-fn main() {
+    fn main() {
     // Global signal handler to prevent exit on Ctrl+C
     // This allows child processes (like tcpdump) to handle the signal and exit,
     // while the parent (purpl) stays alive and returns to menu.

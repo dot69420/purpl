@@ -2,7 +2,33 @@
 
 This document outlines the standard workflows for each module within the **purpl** (formerly `nt_test`) CLI.
 
-## 1. Exploit Search (Searchsploit)
+## Global Features
+**Smart Input & Persistence:**
+The application remembers the last target (IP/URL) entered across all modules.
+- When prompted for a target (e.g., `Enter target IP [10.10.10.10]: `), simply press **Enter** to reuse the last value.
+- This allows seamless transitions between modules (e.g., Nmap -> Web Enumeration) without re-typing the address.
+
+---
+
+## 1. Network Recon (Nmap & Discovery)
+Performs network reconnaissance and port scanning via a structured submenu.
+
+### Workflow
+1.  Select **Network Recon** from the main menu.
+2.  Select **Nmap Automator** from the submenu.
+3.  **Target Entry:** Enter the Target IP or Hostname (or press Enter to use the cached target).
+4.  **Profile Selection:**
+    *   The tool offers various scan profiles (Stealth, Connect, Intense, etc.).
+    *   Press **Enter** to select the default profile (**Stealth & Vuln**).
+    *   Or enter a number to choose a specific profile.
+5.  **Execution:**
+    *   **Host Discovery:** Checks if the host is up.
+    *   **Deep Scan:** Enumerates ports, versions, and scripts based on the profile.
+6.  Results are saved to `scans/nmap/<target_ip>/<date>/`.
+
+---
+
+## 2. Exploit Search (Searchsploit)
 **Status:** *Improved*
 
 The Exploit Search module allows you to find known vulnerabilities for specific services or software versions using the Exploit-DB archive.
@@ -11,7 +37,7 @@ The Exploit Search module allows you to find known vulnerabilities for specific 
 There are two ways to use this module:
 
 #### A. Direct Search (Interactive)
-1.  Select **Exploit Search** from the main menu.
+1.  Select **Exploit Search** from the main menu (under Exploitation Hub).
 2.  When prompted `Enter Search Query or Target IP/XML:`, type your search terms directly.
     *   *Example:* `apache 2.4`
     *   *Example:* `windows smb`
@@ -21,7 +47,7 @@ There are two ways to use this module:
     *   Enter `q` or `exit` to return to the main menu.
 
 #### B. Auto-Correlation (from Nmap Scan)
-1.  Perform an **Nmap Scan** on a target first (see Section 2).
+1.  Perform an **Nmap Scan** on a target first.
 2.  Select **Exploit Search** from the main menu.
 3.  When prompted, enter the **Target IP** of the previously scanned host.
     *   *Example:* `10.10.10.10`
@@ -34,28 +60,13 @@ There are two ways to use this module:
 
 ---
 
-## 2. Network Scan (Nmap)
-Performs network reconnaissance and port scanning.
-
-### Workflow
-1.  Select **Network Scan** from the menu.
-2.  Enter the **Target IP** or Hostname.
-3.  (Optional) Enter custom ports or ranges when prompted (if running via CLI flags like `--port`).
-4.  The tool runs `nmap_automator.sh` (or internal logic) to:
-    *   Check if host is up (Ping).
-    *   Scan for open ports.
-    *   Fingerprint services and versions.
-5.  Results are saved to `scans/nmap/<target_ip>/`.
-
----
-
 ## 3. Web Enumeration (Gobuster)
 Brute-forces hidden directories and files on a web server.
 
 ### Workflow
-1.  Select **Web Enumeration**.
+1.  Select **Web Arsenal** -> **Web Enumeration**.
 2.  Enter the **Target URL** (must include `http://` or `https://`).
-    *   *Example:* `http://10.10.10.10`
+    *   *Smart Input:* Press Enter to use the last target.
 3.  The tool runs `gobuster` using a default wordlist (typically `common.txt` or similar).
 4.  Found paths are displayed and saved to `scans/web/<target>/`.
 
@@ -65,7 +76,7 @@ Brute-forces hidden directories and files on a web server.
 Fuzzes specific parameters or endpoints.
 
 ### Workflow
-1.  Select **Web Fuzzing**.
+1.  Select **Web Arsenal** -> **Web Fuzzing**.
 2.  Enter the **Target URL** including the `FUZZ` keyword where you want to inject payloads.
     *   *Example:* `http://site.com/FUZZ` (Directory fuzzing)
     *   *Example:* `http://site.com/api.php?id=FUZZ` (Parameter fuzzing)
@@ -77,11 +88,9 @@ Fuzzes specific parameters or endpoints.
 Launches active attacks using tools like SQLMap or Curl.
 
 ### Workflow
-1.  Select **Exploitation**.
-2.  **Target Selection Menu:**
-    *   The tool will display a numbered list of **Existing Targets** (discovered in previous Nmap scans).
-    *   **Option [New Target]:** Select "New Target (Run Nmap Scan first)" to be redirected to the **Network Scan** module immediately. After scanning, you will return to exploitation with the new target selected.
-    *   **Option [Manual]:** Select "New Target (Manual Input)" to skip scanning and enter an IP directly.
+1.  Select **Exploitation Hub** -> **Active Exploitation**.
+2.  **Target Selection:**
+    *   Enter the target URL/IP (or use Smart Input).
 3.  **Tool Selection:**
     *   Choose the sub-tool if prompted (or specify via `--tool` in CLI):
         *   **SQLMap:** For SQL injection testing.
@@ -106,7 +115,7 @@ If **Hydra** is selected within Exploitation:
 Performs LLMNR/NBT-NS poisoning to capture NTLM hashes.
 
 ### Workflow
-1.  Select **LAN Poisoning**.
+1.  Select **Network Operations** -> **LAN Poisoning**.
 2.  Enter the **Network Interface** to listen on (e.g., `eth0`, `wlan0`).
 3.  The tool starts `responder` in analysis or active mode (requires Root).
 4.  Captured hashes are logged to the `scans` directory.
@@ -117,7 +126,7 @@ Performs LLMNR/NBT-NS poisoning to capture NTLM hashes.
 Automated wireless network auditing.
 
 ### Workflow
-1.  Select **WiFi Audit**.
+1.  Select **Wireless & RF** -> **WiFi Audit**.
 2.  Enter the **Wireless Interface** (e.g., `wlan0mon`).
 3.  The tool starts `wifite` to scan for networks and attempt attacks (WEP, WPA Handshake capture, WPS).
 4.  *Note:* Requires a monitor-mode capable wireless card.
@@ -128,7 +137,7 @@ Automated wireless network auditing.
 Captures network traffic for analysis, with an interactive configuration wizard.
 
 ### Workflow
-1.  Select **Packet Sniffer**.
+1.  Select **Network Operations** -> **Packet Sniffer**.
 2.  **Interface Selection:**
     *   The tool lists available network interfaces (via `ip link`).
     *   Select an interface from the list (e.g., `eth0`, `wlan0`) or enter one manually.
@@ -148,7 +157,20 @@ Captures network traffic for analysis, with an interactive configuration wizard.
 Scans and attacks Bluetooth devices.
 
 ### Workflow
-1.  Select **Bluetooth Arsenal**.
+1.  Select **Wireless & RF** -> **Bluetooth Arsenal**.
 2.  Enter a **Target MAC** address OR type `scan` to discover devices.
 3.  If `scan` is selected, it runs `hcitool scan` and `hcitool lescan`.
 4.  If a MAC is provided, it attempts to browse services (`sdptool`) and ping flood (`l2ping`) the device.
+
+---
+
+## 11. Results Viewer
+Interactive browser for all scan data.
+
+### Workflow
+1.  Select **Results Viewer** from the main menu.
+2.  **Select Category:** Choose the tool type (e.g., `NMAP`, `WEB`, `WIFI`).
+3.  **Select Target:** Choose the target identifier (IP/URL).
+4.  **Select Date:** Choose the specific scan timestamp.
+5.  **View Report:** The tool parses and displays the results (e.g., parsed Nmap services, cracked WiFi keys) directly in the terminal.
+

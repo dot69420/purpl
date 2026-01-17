@@ -14,7 +14,7 @@ To ensure reliability and testability, all modules **MUST** adhere to this patte
 ### A. Dependency Injection
 All core logic is decoupled from side effects (System commands, IO) via traits defined in `src/executor.rs` and `src/io_handler.rs`.
 - **`CommandExecutor`:** Abstracts system command execution (`execute`, `execute_output`, `spawn_stdout`, `is_root`).
-- **`IoHandler`:** Abstracts Input/Output operations (`println`, `print`, `read_line`, `flush`).
+- **`IoHandler`:** Abstracts Input/Output operations (`println`, `print`, `read_line`, `read_input`, `flush`).
 
 ### B. Module Structure (`src/<module>.rs`)
 1.  **Profiles Enum/Struct:** Define presets (e.g., `Fast`, `Thorough`).
@@ -27,19 +27,23 @@ All core logic is decoupled from side effects (System commands, IO) via traits d
         io: &dyn IoHandler
     )
     ```
-3.  **Output Management:**
+3.  **Input Handling:**
+    - Use `io.read_input(prompt, default)` for interactive arguments.
+    - Leverage `history::get_last_target()` to provide smart defaults for targets.
+4.  **Output Management:**
     - Generate timestamped directory: `scans/<module_name>/<date>/`.
     - Always capture `stdout`/`stderr` or logs.
     - Parse output in real-time or post-execution.
 
 ### C. Integration (`src/main.rs`)
 1.  **CLI Arg:** Add `#[arg(long)]` for the new module.
-2.  **Menu:** Add entry to `tools` vector in `run_interactive_mode`.
+2.  **Menu:** Add entry to `tools` vector in `run_interactive_mode` (or appropriate submenu).
 3.  **Dispatch:** Call the module's run function using the real executor and io handler.
 
 ### D. Reporting (`src/report.rs`)
-1.  **Detection:** Update `display_scan_report` to check for the new module's output file.
-2.  **Parsing:** Implement a specific parser (e.g., `parse_gobuster_output`).
+1.  **Interactive Viewer:** Use `report::view_results(io)` for the main results menu.
+2.  **Detection:** Update `display_scan_report` to check for the new module's output file.
+3.  **Parsing:** Implement a specific parser (e.g., `parse_gobuster_output`).
 
 ---
 

@@ -100,21 +100,26 @@ mod tests {
         let executor = MockExecutor::new();
         let io = MockIoHandler::new();
 
-        // 1. Select Tool 1 (Nmap)
+        // 1. Select Tool 1 (Network Recon Category)
         io.add_input("1\n");
 
-        // Tool 1 needs arg: "Enter target IP: "
+        // 2. Select Tool 1 (Nmap Automator) inside Submenu
+        io.add_input("1\n");
+
+        // 3. Tool needs arg: "Enter target IP: "
         io.add_input("127.0.0.1\n");
 
-        // Then inside tool logic:
-        // Nmap tool uses run_nmap_scan.
-        // It asks for Profile (Input 2)
+        // 4. Nmap Profile Selection (Input 2)
         io.add_input("2\n");
 
-        // After tool runs, menu asks "Press Enter to return to menu..."
+        // 5. After tool runs, submenu asks "Press Enter to return to menu..."
         io.add_input("\n");
 
-        io.add_input("9\n"); // Exit (Option 9)
+        // 6. Back to Main Menu (Option 0 in Submenu)
+        io.add_input("0\n");
+
+        // 7. Exit (Option 9 in Main Menu)
+        io.add_input("9\n"); 
 
         // Mock nmap host discovery output using new registry
         executor.register_output("nmap", b"Nmap scan report for 127.0.0.1");
@@ -142,11 +147,13 @@ mod tests {
         
         // --- Sequence of Inputs ---
 
-        // 1. Nmap (Option 1) - Standalone
+        // 1. Network Recon (Option 1) -> Nmap (Option 1)
+        io.add_input("1\n"); // Select Recon Category
         io.add_input("1\n"); // Select Nmap
         io.add_input("10.0.0.1\n"); // Target
         io.add_input("2\n"); // Profile: Quick
-        io.add_input("\n"); // Return to menu
+        io.add_input("\n"); // Return to submenu
+        io.add_input("0\n"); // Back to Main Menu
 
         // 2. Web Arsenal (Option 2) -> Gobuster (Option 1)
         io.add_input("2\n"); // Enter Web Submenu

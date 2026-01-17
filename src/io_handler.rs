@@ -6,6 +6,7 @@ pub trait IoHandler {
     fn print(&self, msg: &str);
     fn flush(&self);
     fn read_line(&self) -> String;
+    fn read_input(&self, prompt: &str, default: Option<&str>) -> String;
 }
 
 pub struct RealIoHandler;
@@ -27,6 +28,23 @@ impl IoHandler for RealIoHandler {
         let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap_or_default();
         input
+    }
+
+    fn read_input(&self, prompt: &str, default: Option<&str>) -> String {
+        let prompt_text = if let Some(def) = default {
+            format!("{} [{}] ", prompt, def)
+        } else {
+            format!("{} ", prompt)
+        };
+        self.print(&prompt_text);
+        self.flush();
+        let input = self.read_line();
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            default.unwrap_or("").to_string()
+        } else {
+            trimmed.to_string()
+        }
     }
 }
 
@@ -70,6 +88,23 @@ impl IoHandler for MockIoHandler {
             self.input_queue.borrow_mut().remove(0)
         } else {
             String::new()
+        }
+    }
+
+    fn read_input(&self, prompt: &str, default: Option<&str>) -> String {
+        let prompt_text = if let Some(def) = default {
+            format!("{} [{}] ", prompt, def)
+        } else {
+            format!("{} ", prompt)
+        };
+        self.print(&prompt_text);
+        
+        let input = self.read_line();
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            default.unwrap_or("").to_string()
+        } else {
+            trimmed.to_string()
         }
     }
 }
