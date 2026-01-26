@@ -73,3 +73,43 @@ impl IoHandler for MockIoHandler {
         }
     }
 }
+
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+pub struct CapturingIoHandler {
+    pub output: Arc<Mutex<String>>,
+}
+
+impl CapturingIoHandler {
+    pub fn new() -> Self {
+        Self {
+            output: Arc::new(Mutex::new(String::new())),
+        }
+    }
+
+    pub fn get_output(&self) -> String {
+        self.output.lock().unwrap().clone()
+    }
+}
+
+impl IoHandler for CapturingIoHandler {
+    fn println(&self, msg: &str) {
+        let mut out = self.output.lock().unwrap();
+        out.push_str(msg);
+        out.push('\n');
+    }
+
+    fn print(&self, msg: &str) {
+        let mut out = self.output.lock().unwrap();
+        out.push_str(msg);
+    }
+
+    fn flush(&self) {}
+
+    fn read_line(&self) -> String {
+        // Background jobs usually don't support interactive input.
+        // Return empty or default.
+        String::new()
+    }
+}

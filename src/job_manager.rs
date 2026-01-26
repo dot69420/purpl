@@ -1,0 +1,97 @@
+use std::sync::{Arc, Mutex};
+use std::thread;
+use chrono::Local;
+use crate::io_handler::{IoHandler, CapturingIoHandler};
+use crate::executor::CommandExecutor;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum JobStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+pub struct Job {
+    pub id: usize,
+    pub name: String,
+    pub status: Arc<Mutex<JobStatus>>,
+    pub start_time: String,
+    pub end_time: Arc<Mutex<Option<String>>>,
+    pub io: CapturingIoHandler,
+}
+
+impl Job {
+    pub fn new(id: usize, name: &str) -> Self {
+        Self {
+            id,
+            name: name.to_string(),
+            status: Arc::new(Mutex::new(JobStatus::Running)),
+            start_time: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            end_time: Arc::new(Mutex::new(None)),
+            io: CapturingIoHandler::new(),
+        }
+    }
+
+    pub fn is_running(&self) -> bool {
+        *self.status.lock().unwrap() == JobStatus::Running
+    }
+}
+
+pub struct JobManager {
+    pub jobs: Arc<Mutex<Vec<Arc<Job>>>>,
+    next_id: Arc<Mutex<usize>>,
+}
+
+impl JobManager {
+    pub fn new() -> Self {
+        Self {
+            jobs: Arc::new(Mutex::new(Vec::new())),
+            next_id: Arc::new(Mutex::new(1)),
+        }
+    }
+
+    pub fn spawn_job<F>(&self, name: &str, task: F, executor: Arc<dyn CommandExecutor + Send + Sync>) 
+    where
+        F: FnOnce(Arc<dyn CommandExecutor + Send + Sync>, &dyn IoHandler) + Send + 'static,
+    {
+        let mut id_lock = self.next_id.lock().unwrap();
+        let id = *id_lock;
+        *id_lock += 1;
+
+        let job = Arc::new(Job::new(id, name));
+        
+        {
+            let mut jobs_lock = self.jobs.lock().unwrap();
+            jobs_lock.push(job.clone());
+        }
+
+        let job_clone = job.clone();
+        
+        thread::spawn(move || {
+            // Task runs here
+            task(executor, &job_clone.io);
+
+            // Update status
+            // Note: Since current tool functions don't return Result (they handle errors internally and print to IO),
+            // we treat a return as "Completed" (execution finished).
+            // A "Failed" status would require the task to communicate that back or panic.
+            let mut status = job_clone.status.lock().unwrap();
+            *status = JobStatus::Completed;
+            
+            *job_clone.end_time.lock().unwrap() = Some(Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+        });
+    }
+
+    pub fn list_jobs(&self) -> Vec<Arc<Job>> {
+        self.jobs.lock().unwrap().clone()
+    }
+    
+    pub fn get_job(&self, id: usize) -> Option<Arc<Job>> {
+        let jobs = self.jobs.lock().unwrap();
+        jobs.iter().find(|j| j.id == id).cloned()
+    }
+}
+
+#[cfg(test)]
+#[path = "job_manager_tests.rs"]
+mod tests;

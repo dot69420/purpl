@@ -3,6 +3,8 @@ mod tests {
     use crate::{Cli, Commands, Tool, print_banner, run_legacy_script, run_interactive_mode};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
+    use crate::job_manager::JobManager;
+    use std::sync::Arc;
     use clap::CommandFactory;
     use clap::Parser;
 
@@ -84,12 +86,13 @@ mod tests {
 
     #[test]
     fn test_run_interactive_mode_exit() {
-        let executor = MockExecutor::new();
+        let executor = Arc::new(MockExecutor::new());
         let io = MockIoHandler::new();
-        // Exit is now option 9 (5 tools + 4 options)
-        io.add_input("9\n");
+        let job_manager = Arc::new(JobManager::new());
+        // Exit is now option 10 (5 tools + 5 options)
+        io.add_input("10\n");
 
-        run_interactive_mode(false, &executor, &io);
+        run_interactive_mode(false, executor.clone(), &io, job_manager);
 
         let out = io.get_output();
         assert!(out.contains("Exiting"));
@@ -97,14 +100,18 @@ mod tests {
 
     #[test]
     fn test_run_interactive_mode_select_tool() {
-        let executor = MockExecutor::new();
+        let executor = Arc::new(MockExecutor::new());
         let io = MockIoHandler::new();
+        let job_manager = Arc::new(JobManager::new());
 
         // 1. Select Tool 1 (Nmap)
         io.add_input("1\n");
 
         // Tool 1 needs arg: "Enter target IP: "
         io.add_input("127.0.0.1\n");
+
+        // Background prompt: N
+        io.add_input("n\n");
 
         // Then inside tool logic:
         // Nmap tool uses run_nmap_scan.
@@ -114,12 +121,12 @@ mod tests {
         // After tool runs, menu asks "Press Enter to return to menu..."
         io.add_input("\n");
 
-        io.add_input("9\n"); // Exit (Option 9)
+        io.add_input("10\n"); // Exit (Option 10)
 
         // Mock nmap host discovery output using new registry
         executor.register_output("nmap", b"Nmap scan report for 127.0.0.1");
 
-        run_interactive_mode(false, &executor, &io);
+        run_interactive_mode(false, executor.clone(), &io, job_manager);
 
         let calls = executor.get_calls();
         assert!(!calls.is_empty());
@@ -130,8 +137,9 @@ mod tests {
 
     #[test]
     fn test_interactive_mode_full_flow() {
-        let executor = MockExecutor::new();
+        let executor = Arc::new(MockExecutor::new());
         let io = MockIoHandler::new();
+        let job_manager = Arc::new(JobManager::new());
         
         // --- Setup Mocks ---
         executor.register_success("nmap");
@@ -145,6 +153,7 @@ mod tests {
         // 1. Nmap (Option 1) - Standalone
         io.add_input("1\n"); // Select Nmap
         io.add_input("10.0.0.1\n"); // Target
+        io.add_input("n\n"); // Background: No
         io.add_input("2\n"); // Profile: Quick
         io.add_input("\n"); // Return to menu
 
@@ -152,6 +161,7 @@ mod tests {
         io.add_input("2\n"); // Enter Web Submenu
         io.add_input("1\n"); // Select Gobuster
         io.add_input("http://10.0.0.1\n"); // Target
+        io.add_input("n\n"); // Background: No
         io.add_input("3\n"); // Profile: Manual
         io.add_input("wordlists/test.txt\n"); // Wordlist
         io.add_input("\n"); // Return to submenu
@@ -160,17 +170,18 @@ mod tests {
         // 3. Network Ops (Option 4) -> Sniffer (Option 1)
         io.add_input("4\n"); // Enter NetOps Submenu
         io.add_input("1\n"); // Select Sniffer
+        io.add_input("n\n"); // Background: No (Asked first in show_submenu)
         io.add_input("1\n"); // Interface Selection (1: eth0)
         io.add_input("4\n"); // Profile: ICMP
         io.add_input("1\n"); // Mode: Passive
         io.add_input("\n"); // Return to submenu
         io.add_input("0\n"); // Back to Main Menu
 
-        // 4. Exit (Option 9)
-        io.add_input("9\n");
+        // 4. Exit (Option 10)
+        io.add_input("10\n");
 
         // --- Run ---
-        run_interactive_mode(false, &executor, &io);
+        run_interactive_mode(false, executor.clone(), &io, job_manager);
 
         // --- Verification ---
         let calls = executor.get_calls();

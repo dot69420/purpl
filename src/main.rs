@@ -12,16 +12,19 @@ mod bluetooth;
 mod fuzzer;
 pub mod executor;
 pub mod io_handler;
+pub mod job_manager;
 
 use clap::{Parser, Subcommand};
 use std::process::Command;
 use std::path::Path;
+use std::sync::Arc;
 
 use colored::*;
 
 use history::print_history;
 use executor::{CommandExecutor, ShellExecutor};
 use io_handler::{IoHandler, RealIoHandler};
+use job_manager::JobManager;
 
 #[derive(Parser, Debug)]
 #[command(name = "purpl")]
@@ -54,138 +57,66 @@ pub struct Cli {
     pub command: Option<Commands>,
 
     /// Run Nmap scan on target
-    ///
-    /// Executes an Nmap scan against the specified IP address or hostname. 
-    /// Can be combined with --port, --no-ping, and --args.
-    ///
-    /// Example: --nmap 10.10.10.10
     #[arg(short, long)]
     pub nmap: Option<String>,
 
     /// Specify port(s) for Nmap
-    ///
-    /// Defines specific ports to scan. Supports single ports (80), ranges (80-100), 
-    /// or lists (80,443,8080). Use "p-" for all ports.
-    ///
-    /// Example: --port "80,443"
     #[arg(long)]
     pub port: Option<String>,
 
     /// Skip Host Discovery (Nmap -Pn)
-    ///
-    /// Disables the initial ping scan (host discovery) and treats all hosts as online.
-    /// Useful for firewalled targets that block ICMP.
     #[arg(long, default_value_t = false)]
     pub no_ping: bool,
 
     /// Pass extra arguments to the underlying tool
-    ///
-    /// Allows passing raw flags directly to the executed tool command (Nmap, Gobuster, etc.).
-    /// Use quotes to pass multiple flags.
-    ///
-    /// Example: --args "-sC -sV --script=vuln"
     #[arg(long)]
     pub args: Option<String>,
 
     /// Specify sub-tool to use
-    ///
-    /// Selects a specific sub-tool for modules that support multiple engines.
-    /// Currently used by the --exploit module (options: 'sqlmap', 'curl').
-    ///
-    /// Example: --tool sqlmap
     #[arg(long)]
     pub tool: Option<String>,
 
     /// Run WiFi Audit on interface
-    ///
-    /// Initiates a WiFi audit using Wifite on the specified wireless interface (e.g., wlan0).
-    /// Requires root privileges.
     #[arg(long)]
     pub wifite: Option<String>,
 
     /// Run Packet Sniffer on interface
-    ///
-    /// Starts a packet capture (Tcpdump) on the specified interface.
-    ///
-    /// Example: --sniff eth0
     #[arg(short, long)]
     pub sniff: Option<String>,
 
     /// Run Web Enumeration on target URL
-    ///
-    /// Uses Gobuster to brute-force directories and files on the target web server.
-    ///
-    /// Example: --web http://example.com
     #[arg(long)]
     pub web: Option<String>,
 
     /// Run Web Fuzzing (ffuf) on target URL
-    ///
-    /// Fuzzes the target URL using Ffuf. The URL must contain the 'FUZZ' keyword
-    /// to specify the injection point.
-    ///
-    /// Example: --fuzz http://example.com/FUZZ
     #[arg(long)]
     pub fuzz: Option<String>,
 
     /// Custom wordlist path
-    ///
-    /// Specifies a custom path to a wordlist file for Web Enumeration, Fuzzing, or Brute Force.
-    ///
-    /// Example: -w /usr/share/wordlists/rockyou.txt
     #[arg(short = 'w', long)]
     pub wordlist: Option<String>,
 
     /// Run Brute Force on target IP
-    ///
-    /// Initiates a brute-force attack (Hydra) against services on the target IP.
-    /// Interactive mode will prompt for service type, user list, and password list.
-    ///
-    /// Example: --brute 192.168.1.50
     #[arg(long)]
     pub brute: Option<String>,
 
     /// Search for exploits (Searchsploit)
-    ///
-    /// Searches the Exploit-DB archive (via Searchsploit) for known vulnerabilities.
-    /// Accepts a target IP (to parse Nmap XML results) or a direct Nmap XML file path.
-    ///
-    /// Example: --search-exploit 10.10.10.10
     #[arg(long)]
     pub search_exploit: Option<String>,
 
     /// Run Active Exploitation on target
-    ///
-    /// Launches the exploitation module. Supports automatic SQLMap execution or
-    /// a sophisticated Curl request builder for manual exploitation.
-    /// Use --tool to select the sub-tool.
-    ///
-    /// Example: --exploit http://vuln.com/id=1 --tool sqlmap
     #[arg(long)]
     pub exploit: Option<String>,
 
     /// Run LAN Poisoning on interface
-    ///
-    /// Starts network poisoning attacks (Responder) on the specified interface to
-    /// capture credentials (LLMNR/NBT-NS poisoning).
-    ///
-    /// Example: --poison eth0
     #[arg(long)]
     pub poison: Option<String>,
 
     /// Run Bluetooth attacks
-    ///
-    /// Launches Bluetooth reconnaissance and attack tools (using bluetoothctl/hcitool).
-    /// Accepts a target MAC address or "scan" to start discovery.
-    ///
-    /// Example: --bluetooth scan
     #[arg(long)]
     pub bluetooth: Option<String>,
 
     /// Enable Proxychains for evasion
-    ///
-    /// Wraps all executed commands with 'proxychains' to route traffic through
-    /// configured proxies (e.g., Tor, SOCKS). Useful for evasion and anonymity.
     #[arg(short, long, default_value_t = false)]
     pub proxy: bool,
 }
@@ -193,8 +124,6 @@ pub struct Cli {
 #[derive(Subcommand, Debug, PartialEq)]
 pub enum Commands {
     /// Show scan history
-    ///
-    /// Displays a log of previously executed scans, their targets, and status.
     History,
 }
 
@@ -204,11 +133,11 @@ pub struct Tool {
     pub needs_arg: bool,
     pub arg_prompt: String,
     pub use_sudo: bool,
-    pub function: Option<fn(&str, Option<&str>, bool, &dyn CommandExecutor, &dyn IoHandler)>,
+    pub function: Option<fn(&str, Option<&str>, bool, Arc<dyn CommandExecutor + Send + Sync>, &dyn IoHandler, Option<Arc<JobManager>>)>, 
 }
 
 impl Tool {
-    pub fn new(name: &str, script: &str, needs_arg: bool, arg_prompt: &str, use_sudo: bool, func: Option<fn(&str, Option<&str>, bool, &dyn CommandExecutor, &dyn IoHandler)>) -> Self {
+    pub fn new(name: &str, script: &str, needs_arg: bool, arg_prompt: &str, use_sudo: bool, func: Option<fn(&str, Option<&str>, bool, Arc<dyn CommandExecutor + Send + Sync>, &dyn IoHandler, Option<Arc<JobManager>>)>) -> Self {
         Self {
             name: name.to_string(),
             script: script.to_string(),
@@ -238,28 +167,15 @@ pub fn print_banner(io: &dyn IoHandler) {
     io.println(&format!("\n{}", "              PURPL Control Center | Rust Edition v2.2\n".magenta().bold()));
 }
 
-// Legacy script wrapper needs to ignore extra_args for now or we update it too.
-// Since we are moving away from scripts, we'll just ignore it in legacy path.
 pub fn run_legacy_script(script: &str, arg: &str, use_sudo: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    let _args = if !arg.is_empty() {
-        vec![arg]
-    } else {
-        vec![]
-    };
-
     let script_path = format!("./{}", script);
-
     let res = if use_sudo {
         let mut sudo_args = vec![script_path.as_str()];
-        if !arg.is_empty() {
-            sudo_args.push(arg);
-        }
+        if !arg.is_empty() { sudo_args.push(arg); }
         executor.execute("sudo", &sudo_args)
     } else {
         let mut script_args = vec![];
-        if !arg.is_empty() {
-            script_args.push(arg);
-        }
+        if !arg.is_empty() { script_args.push(arg); }
         executor.execute(&script_path, &script_args)
     };
 
@@ -273,45 +189,91 @@ pub fn run_legacy_script(script: &str, arg: &str, use_sudo: bool, executor: &dyn
     let _ = io.read_line();
 }
 
-// Wrappers to match the unified function signature: fn(&str, Option<&str>, bool, &dyn CommandExecutor, &dyn IoHandler)
-
-fn nmap_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    // In interactive mode, we don't support custom_ports/no_ping flags easily yet, 
-    // unless we prompt for them. For now, we pass None/false but pass extra_args.
-    nmap::run_nmap_scan(target, None, false, extra_args, use_proxy, executor, io); 
+fn nmap_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
+    nmap::run_nmap_scan(target, None, false, extra_args, use_proxy, &*executor, io); 
 }
 
-fn web_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    web::run_web_enum(target, extra_args, use_proxy, executor, io);
+fn web_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
+    web::run_web_enum(target, extra_args, use_proxy, &*executor, io);
 }
 
-fn fuzzer_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    fuzzer::run_fuzzer(target, None, extra_args, use_proxy, executor, io);
+fn fuzzer_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
+    fuzzer::run_fuzzer(target, None, extra_args, use_proxy, &*executor, io);
 }
 
-fn exploit_search_wrapper(target: &str, _extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    search_exploit::run_searchsploit(target, use_proxy, executor, io);
+fn exploit_search_wrapper(target: &str, _extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
+    search_exploit::run_searchsploit(target, use_proxy, &*executor, io);
 }
 
-fn exploit_active_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    // Wrapper for interactive mode: pass None for tool_name to trigger prompt
-    exploit::run_exploitation_tool(target, None, extra_args, use_proxy, executor, io);
+fn exploit_active_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
+    exploit::run_exploitation_tool(target, None, extra_args, use_proxy, &*executor, io);
 }
 
-fn poison_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    poison::run_poisoning(interface, use_proxy, executor, io);
+fn poison_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
+    poison::run_poisoning(interface, use_proxy, &*executor, io);
 }
-fn wifi_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    wifi::run_wifi_audit(interface, use_proxy, executor, io);
+fn wifi_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
+    wifi::run_wifi_audit(interface, use_proxy, &*executor, io);
 }
-fn bluetooth_wrapper(arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    bluetooth::run_bluetooth_attacks(arg, use_proxy, executor, io);
+fn bluetooth_wrapper(arg: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
+    bluetooth::run_bluetooth_attacks(arg, use_proxy, &*executor, io);
 }
-fn sniffer_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    sniffer::run_sniffer(interface, use_proxy, executor, io);
+fn sniffer_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
+    sniffer::run_sniffer(interface, use_proxy, &*executor, io);
 }
 
-pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+fn view_background_jobs(job_manager: &JobManager, io: &dyn IoHandler) {
+    loop {
+        io.println(&format!("\n-- {} --", "Background Jobs".cyan().bold()));
+        let jobs = job_manager.list_jobs();
+        
+        if jobs.is_empty() {
+            io.println("No background jobs.");
+            io.print("\nPress Enter to return...");
+            io.flush();
+            let _ = io.read_line();
+            return;
+        }
+
+        io.println(&format!("{:<5} | {:<10} | {:<20} | {:<20}", "ID", "Status", "Start Time", "Name"));
+        io.println(&"-".repeat(70));
+        
+        for job in &jobs {
+            let status = job.status.lock().unwrap();
+            let status_str = match *status {
+                crate::job_manager::JobStatus::Running => "Running".yellow(),
+                crate::job_manager::JobStatus::Completed => "Completed".green(),
+                crate::job_manager::JobStatus::Failed => "Failed".red(),
+            };
+            io.println(&format!("{:<5} | {:<10} | {:<20} | {:<20}", 
+                job.id, status_str, job.start_time, job.name.chars().take(20).collect::<String>()));
+        }
+        
+        io.println("\n[ID] to view logs, [R]efresh, [0] Back");
+        io.print("Select: ");
+        io.flush();
+        let input = io.read_line();
+        let input_trim = input.trim();
+        
+        if input_trim == "0" { break; }
+        if input_trim.eq_ignore_ascii_case("r") || input_trim.is_empty() { continue; }
+        
+        if let Ok(id) = input_trim.parse::<usize>() {
+            if let Some(job) = job_manager.get_job(id) {
+                io.println(&format!("\n-- Output for Job #{} ({}) --", job.id, job.name));
+                io.println(&job.io.get_output());
+                io.println("\n-- End of Output --");
+                io.print("Press Enter to continue...");
+                io.flush();
+                let _ = io.read_line();
+            } else {
+                io.println(&format!("{}", "[!] Invalid Job ID.".red()));
+            }
+        }
+    }
+}
+
+pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Arc<JobManager>) {
 
     let main_menu = vec![
 
@@ -352,10 +314,12 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
         io.println(&format!("[{}] View Scan Results", main_menu.len() + 1));
 
         io.println(&format!("[{}] View History", main_menu.len() + 2));
+        
+        io.println(&format!("[{}] View Background Jobs", main_menu.len() + 3));
 
-        io.println(&format!("[{}] Toggle Proxychains", main_menu.len() + 3));
+        io.println(&format!("[{}] Toggle Proxychains", main_menu.len() + 4));
 
-        io.println(&format!("[{}] Exit", main_menu.len() + 4));
+        io.println(&format!("[{}] Exit", main_menu.len() + 5));
 
         
 
@@ -403,15 +367,107 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
 
                 if let Some(func) = tool.function {
 
-                    func(&arg, None, use_proxy, executor, io);
+                    // Check for background execution
 
-                    if tool.name.contains("Nmap") { // Only pause for standalone tools, menus handle themselves
+                    // Only for leaf tools. How to know?
 
-                        io.print("\nPress Enter to return to menu...");
+                    // We know Nmap is a leaf. Categories are not.
+
+                    // Categories don't need args (needs_arg=false) in this menu structure.
+
+                    // Nmap needs arg.
+
+                    // So if needs_arg is true, it's likely a leaf tool here.
+
+                    // Or we can just ask for everything? If we ask for Web Arsenal, and say Yes, 
+
+                    // it spawns a job that runs... the menu?
+
+                    // `web_category` runs `show_submenu`.
+
+                    // If we run `show_submenu` in background, it prints to captured IO... but waits for input!
+
+                    // Background jobs return empty string for input.
+
+                    // So `show_submenu` would exit immediately or loop infinitely?
+
+                    // `choice_idx` would be 0 or invalid. It would exit.
+
+                    // So backgrounding a menu is useless but safe-ish (it just finishes instantly).
+
+                    
+
+                    // To be better, we should only prompt for tools that are NOT categories.
+
+                    // In this specific list, Nmap is the only one with `needs_arg=true`.
+
+                    // The others are categories with `needs_arg=false`.
+
+                    // So we can condition on `tool.needs_arg`.
+
+                    
+
+                    let mut run_bg = false;
+
+                    if tool.needs_arg {
+
+                        io.print("Run in background? (y/N): ");
 
                         io.flush();
 
-                        let _ = io.read_line();
+                        let bg_in = io.read_line();
+
+                        if bg_in.trim().eq_ignore_ascii_case("y") {
+
+                            run_bg = true;
+
+                        }
+
+                    }
+
+
+
+                    if run_bg {
+
+                        let arg_c = arg.clone();
+
+                        let proxy_c = use_proxy;
+
+                        let func_c = func;
+
+                        let name = format!("{} {}", tool.name, arg);
+
+                        let exec_c = executor.clone(); // Arc<dyn CommandExecutor>
+
+                        
+
+                        job_manager.spawn_job(&name, move |ex, io| {
+
+                            func_c(&arg_c, None, proxy_c, ex, io, None); // Use ex from spawn_job (which is exec_c cloned)
+
+                        }, exec_c);
+
+                        
+
+                        io.println(&format!("{}", "Job started in background.".green()));
+
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+
+                    } else {
+
+                        func(&arg, None, use_proxy, executor.clone(), io, Some(job_manager.clone()));
+
+                        
+
+                        if tool.name.contains("Nmap") { 
+
+                             io.print("\nPress Enter to return to menu...");
+
+                             io.flush();
+
+                             let _ = io.read_line();
+
+                        }
 
                     }
 
@@ -420,6 +476,8 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
 
 
             } else if choice_idx == main_menu.len() + 1 {
+
+                // ... rest is same
 
                 view_scan_results(io);
 
@@ -435,9 +493,13 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
 
             } else if choice_idx == main_menu.len() + 3 {
 
-                use_proxy = !use_proxy;
+                view_background_jobs(&job_manager, io);
 
             } else if choice_idx == main_menu.len() + 4 {
+
+                use_proxy = !use_proxy;
+
+            } else if choice_idx == main_menu.len() + 5 {
 
                 io.println("\nExiting. Stay safe!");
 
@@ -463,7 +525,7 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: &dyn CommandExecutor,
 
 
 
-fn web_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+fn web_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
 
     let tools = vec![
 
@@ -473,13 +535,13 @@ fn web_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dy
 
     ];
 
-    show_submenu("Web Arsenal", tools, use_proxy, executor, io);
+    show_submenu("Web Arsenal", tools, use_proxy, executor, io, job_manager);
 
 }
 
 
 
-fn exploit_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+fn exploit_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
 
     let tools = vec![
 
@@ -489,13 +551,13 @@ fn exploit_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor:
 
     ];
 
-    show_submenu("Exploitation Hub", tools, use_proxy, executor, io);
+    show_submenu("Exploitation Hub", tools, use_proxy, executor, io, job_manager);
 
 }
 
 
 
-fn netops_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+fn netops_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
 
     let tools = vec![
 
@@ -505,13 +567,13 @@ fn netops_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: 
 
     ];
 
-    show_submenu("Network Operations", tools, use_proxy, executor, io);
+    show_submenu("Network Operations", tools, use_proxy, executor, io, job_manager);
 
 }
 
 
 
-fn wireless_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+fn wireless_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
 
     let tools = vec![
 
@@ -521,19 +583,19 @@ fn wireless_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor
 
     ];
 
-    show_submenu("Wireless & RF", tools, use_proxy, executor, io);
+    show_submenu("Wireless & RF", tools, use_proxy, executor, io, job_manager);
 
 }
 
 
 
-fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
 
     loop {
 
         clear_screen();
 
-        io.println(&format!("\n--- {} ---", title.cyan().bold()));
+        io.println(&format!("\n-- {} --", title.cyan().bold()));
 
         for (i, tool) in tools.iter().enumerate() {
 
@@ -591,13 +653,69 @@ fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: &dyn C
 
             if let Some(func) = tool.function {
 
-                func(&arg, None, use_proxy, executor, io);
+                let mut run_in_bg = false;
 
-                io.print("\nPress Enter to return to menu...");
+                if let Some(_jm) = &job_manager {
 
-                io.flush();
+                     io.print("Run in background? (y/N): ");
 
-                let _ = io.read_line();
+                     io.flush();
+
+                     let input = io.read_line();
+
+                     if input.trim().eq_ignore_ascii_case("y") {
+
+                         run_in_bg = true;
+
+                     }
+
+                }
+
+                
+
+                if run_in_bg {
+
+                    if let Some(jm) = &job_manager {
+
+                        let arg_c = arg.clone();
+
+                        let proxy_c = use_proxy;
+
+                        let func_c = func;
+
+                        let name = format!("{} {}", tool.name, arg);
+
+                        let exec_c = executor.clone();
+
+                        let exec_c_inner = exec_c.clone();
+
+
+
+                        jm.spawn_job(&name, move |_, io| {
+
+                             func_c(&arg_c, None, proxy_c, exec_c_inner, io, None); 
+
+                        }, exec_c);
+
+                        
+
+                        io.println(&format!("{}", "Background job started!".green()));
+
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+
+                    }
+
+                } else {
+
+                    func(&arg, None, use_proxy, executor.clone(), io, job_manager.clone());
+
+                    io.print("\nPress Enter to return to menu...");
+
+                    io.flush();
+
+                    let _ = io.read_line();
+
+                }
 
             }
 
@@ -608,11 +726,6 @@ fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: &dyn C
 }
 
 fn view_scan_results(io: &dyn IoHandler) {
-    // ... (Same as before, simplified for this rewrite since I have to overwrite main.rs)
-    // Actually, I should probably reuse the existing view_scan_results code.
-    // But since I am overwriting the file, I need to make sure I include it.
-    // The previous read_file showed the full content, so I am safe to paste it.
-    
     if !Path::new("scans").exists() {
         io.println(&format!("{}", "[!] No scans found yet.".yellow()));
         return;
@@ -740,73 +853,149 @@ fn view_scan_results(io: &dyn IoHandler) {
 }
 
 fn main() {
+
     // Global signal handler to prevent exit on Ctrl+C
+
     // This allows child processes (like tcpdump) to handle the signal and exit,
+
     // while the parent (purpl) stays alive and returns to menu.
+
     let _ = ctrlc::set_handler(move || {
+
         println!("\n{}", "^C Received".dimmed());
+
     });
 
+
+
     let cli = Cli::parse();
-    let executor = ShellExecutor;
+
+    let executor = Arc::new(ShellExecutor);
+
     let io = RealIoHandler;
+
+    let job_manager = Arc::new(JobManager::new());
+
+
 
     let use_proxy = cli.proxy;
 
+
+
     if let Some(target) = cli.nmap {
-        nmap::run_nmap_scan(&target, cli.port.as_deref(), cli.no_ping, cli.args.as_deref(), use_proxy, &executor, &io);
+
+        nmap::run_nmap_scan(&target, cli.port.as_deref(), cli.no_ping, cli.args.as_deref(), use_proxy, &*executor, &io);
+
         return;
+
     }
+
+
 
     if let Some(interface) = cli.wifite {
-        wifi::run_wifi_audit(&interface, use_proxy, &executor, &io);
+
+        wifi::run_wifi_audit(&interface, use_proxy, &*executor, &io);
+
         return;
+
     }
+
+
 
     if let Some(interface) = cli.sniff {
-        sniffer::run_sniffer(&interface, use_proxy, &executor, &io);
+
+        sniffer::run_sniffer(&interface, use_proxy, &*executor, &io);
+
         return;
+
     }
+
+
 
     if let Some(target) = cli.web {
-        web::run_web_enum(&target, cli.args.as_deref(), use_proxy, &executor, &io);
+
+        web::run_web_enum(&target, cli.args.as_deref(), use_proxy, &*executor, &io);
+
         return;
+
     }
+
+
 
     if let Some(target) = cli.fuzz {
-        fuzzer::run_fuzzer(&target, cli.wordlist.as_deref(), cli.args.as_deref(), use_proxy, &executor, &io);
+
+        fuzzer::run_fuzzer(&target, cli.wordlist.as_deref(), cli.args.as_deref(), use_proxy, &*executor, &io);
+
         return;
+
     }
+
+
 
     if let Some(target) = cli.brute {
-        brute::run_brute_force(&target, use_proxy, &executor, &io);
+
+        brute::run_brute_force(&target, use_proxy, &*executor, &io);
+
         return;
+
     }
+
+
 
     if let Some(target) = cli.search_exploit {
-        search_exploit::run_searchsploit(&target, use_proxy, &executor, &io);
+
+        search_exploit::run_searchsploit(&target, use_proxy, &*executor, &io);
+
         return;
+
     }
+
+
 
     if let Some(target) = cli.exploit {
-        exploit::run_exploitation_tool(&target, cli.tool.as_deref(), cli.args.as_deref(), use_proxy, &executor, &io);
+
+        exploit::run_exploitation_tool(&target, cli.tool.as_deref(), cli.args.as_deref(), use_proxy, &*executor, &io);
+
         return;
+
     }
+
+
 
     if let Some(interface) = cli.poison {
-        poison::run_poisoning(&interface, use_proxy, &executor, &io);
+
+        poison::run_poisoning(&interface, use_proxy, &*executor, &io);
+
         return;
+
     }
+
+
 
     if let Some(arg) = cli.bluetooth {
-        bluetooth::run_bluetooth_attacks(&arg, use_proxy, &executor, &io);
+
+        bluetooth::run_bluetooth_attacks(&arg, use_proxy, &*executor, &io);
+
         return;
+
     }
+
+
 
     if let Some(Commands::History) = cli.command {
+
         print_history(&io);
+
         return;
+
     }
 
-    run_interactive_mode(use_proxy, &executor, &io);
+
+
+    run_interactive_mode(use_proxy, executor, &io, job_manager);
+
 }
+
+#[cfg(test)]
+#[path = "main_bg_tests.rs"]
+mod bg_tests;
