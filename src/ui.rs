@@ -109,3 +109,9 @@ pub fn show_menu_loop<T>(
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }
+
+pub fn get_input_styled(io: &dyn IoHandler, prompt: &str) -> String {
+    io.print(&format!("\n{} {}", prompt.cyan().bold(), ">> ".purple().bold().blink()));
+    io.flush();
+    io.read_line().trim().to_string()
+}

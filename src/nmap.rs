@@ -7,6 +7,7 @@ use colored::*;
 use crate::history::{append_history, HistoryEntry};
 use crate::executor::CommandExecutor;
 use crate::io_handler::IoHandler;
+use crate::ui;
 
 #[derive(Debug, Clone)]
 pub struct ScanProfile {
@@ -56,14 +57,21 @@ pub fn configure_nmap(target: &str, custom_ports: Option<&str>, skip_discovery: 
     let is_root = executor.is_root();
     let mut use_sudo = false;
 
-    if profile.requires_root && !is_root {
-        io.print(&format!("\n{} {} [Y/n]: ", "[!]".red(), "This profile requires ROOT privileges. Attempt to elevate with sudo?".yellow().bold()));
-        io.flush();
-        let input = io.read_line();
-        
-        if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
-             use_sudo = true;
-        } 
+        if profile.requires_root && !is_root {
+
+            let prompt_msg = format!("[!] {} This profile requires ROOT privileges. Attempt to elevate with sudo? ", "[!]".red());
+
+            let input = ui::get_input_styled(io, &prompt_msg);
+
+            
+
+            if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
+
+                 use_sudo = true;
+
+            }
+
+     
         // Note: Fallback logic moved to caller or handled by profile change?
         // Actually, if user says NO, we should probably switch profile here.
         else {
@@ -146,9 +154,7 @@ fn select_scan_profile(is_large_network: bool, io: &dyn IoHandler) -> ScanProfil
         io.println(&format!("[{}] {} - {}", i + 1, profile.name.green(), profile.description));
     }
 
-    io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
-    io.flush();
-    let input = io.read_line();
+    let input = ui::get_input_styled(io, &format!("Choose a profile [1-{}]: ", profiles.len()));
 
     if let Ok(idx) = input.trim().parse::<usize>() {
         if idx > 0 && idx <= profiles.len() {

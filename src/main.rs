@@ -413,10 +413,7 @@ fn sniffer_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, execu
 fn execute_tool(tool: &Tool, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     let mut arg = String::new();
     if tool.needs_arg {
-        io.print(&format!("\n{}", tool.arg_prompt));
-        io.flush();
-        let input = io.read_line();
-        arg = input.trim().to_string();
+        arg = ui::get_input_styled(io, &tool.arg_prompt);
         if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
              return;
         }
