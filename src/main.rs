@@ -190,6 +190,7 @@ fn run_tool_workflow<C, F, N>(
     job_manager: Option<Arc<JobManager>>,
     execute_fn: F,
     name_fn: N,
+    is_background: bool, // New parameter
 ) 
 where
     C: Clone + Send + Sync + 'static,
@@ -197,17 +198,7 @@ where
     N: Fn(&C) -> String,
 {
     if let Some(config) = config_opt {
-        let mut run_bg = false;
-        if let Some(_) = &job_manager {
-            io.print("\nRun task in background? (y/N): ");
-            io.flush();
-            let input = io.read_line();
-            if input.trim().eq_ignore_ascii_case("y") {
-                run_bg = true;
-            }
-        }
-
-        if run_bg {
+        if is_background {
             if let Some(jm) = job_manager {
                 let config_clone = config.clone();
                 let proxy = use_proxy;
@@ -216,10 +207,18 @@ where
                 
                 let _job = jm.spawn_job(&name, move |ex, io| {
                     exec_arc(config_clone, proxy, ex, io);
-                }, executor, run_bg);
+                }, executor, is_background);
                 
                 io.println(&format!("{}", "Job started in background.".green()));
                 thread::sleep(Duration::from_secs(1));
+            } else {
+                // Should not happen if is_background is true, as job_manager would be Some.
+                // Fallback to foreground? Or error? For now, run foreground.
+                io.println(&format!("{}", "[!] Warning: Job manager not available for background execution. Running in foreground.".yellow()));
+                execute_fn(config, use_proxy, executor, io);
+                io.print("\nPress Enter to return to menu...");
+                io.flush();
+                let _ = io.read_line();
             }
         } else {
             execute_fn(config, use_proxy, executor, io);
@@ -232,73 +231,181 @@ where
 
 fn nmap_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     let config = nmap::configure_nmap(target, None, false, extra_args, &*executor, io);
+    
+    let mut run_bg = false;
+    if let Some(_) = &job_manager {
+        io.print("\nRun task in background? (y/N): ");
+        io.flush();
+        let input = io.read_line();
+        if input.trim().eq_ignore_ascii_case("y") {
+            run_bg = true;
+        }
+    }
+
     run_tool_workflow(Some(config), use_proxy, executor, io, job_manager, 
         |cfg, p, ex, i| nmap::execute_nmap_scan(cfg, p, &*ex, i),
-        |cfg| format!("Nmap {}", cfg.target)
+        |cfg| format!("Nmap {}", cfg.target),
+        run_bg // Pass the decision
     );
 }
 
 fn web_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     let config = web::configure_web_enum(target, extra_args, &*executor, io);
+    
+    let mut run_bg = false;
+    if let Some(_) = &job_manager {
+        io.print("\nRun task in background? (y/N): ");
+        io.flush();
+        let input = io.read_line();
+        if input.trim().eq_ignore_ascii_case("y") {
+            run_bg = true;
+        }
+    }
+
     run_tool_workflow(config, use_proxy, executor, io, job_manager, 
         |cfg, p, ex, i| web::execute_web_enum(cfg, p, &*ex, i),
-        |cfg| format!("WebEnum {}", cfg.target)
+        |cfg| format!("WebEnum {}", cfg.target),
+        run_bg
     );
 }
 
 fn fuzzer_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     let config = fuzzer::configure_fuzzer(target, None, extra_args, &*executor, io);
+    
+    let mut run_bg = false;
+    if let Some(_) = &job_manager {
+        io.print("\nRun task in background? (y/N): ");
+        io.flush();
+        let input = io.read_line();
+        if input.trim().eq_ignore_ascii_case("y") {
+            run_bg = true;
+        }
+    }
+
     run_tool_workflow(config, use_proxy, executor, io, job_manager, 
         |cfg, p, ex, i| fuzzer::execute_fuzzer(cfg, p, &*ex, i),
-        |cfg| format!("Fuzzer {}", cfg.target)
+        |cfg| format!("Fuzzer {}", cfg.target),
+        run_bg
     );
 }
 
 fn exploit_search_wrapper(target: &str, _extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     let config = search_exploit::configure_searchsploit(target, &*executor, io);
+    
+    let mut run_bg = false;
+    if let Some(_) = &job_manager {
+        io.print("\nRun task in background? (y/N): ");
+        io.flush();
+        let input = io.read_line();
+        if input.trim().eq_ignore_ascii_case("y") {
+            run_bg = true;
+        }
+    }
+
     run_tool_workflow(config, use_proxy, executor, io, job_manager, 
         |cfg, p, ex, i| search_exploit::execute_searchsploit(cfg, p, &*ex, i),
-        |cfg| format!("SearchSploit {}", cfg.query)
+        |cfg| format!("SearchSploit {}", cfg.query),
+        run_bg
     );
 }
 
 fn exploit_active_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     let config = exploit::configure_exploitation(target, None, extra_args, &*executor, io);
+    
+    let mut run_bg = false;
+    if let Some(_) = &job_manager {
+        io.print("\nRun task in background? (y/N): ");
+        io.flush();
+        let input = io.read_line();
+        if input.trim().eq_ignore_ascii_case("y") {
+            run_bg = true;
+        }
+    }
+
     run_tool_workflow(config, use_proxy, executor, io, job_manager, 
         |cfg, p, ex, i| exploit::execute_exploitation(cfg, p, &*ex, i),
-        |_cfg| "Exploitation Job".to_string()
+        |_cfg| "Exploitation Job".to_string(),
+        run_bg
     );
 }
 
 fn poison_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     let config = poison::configure_poisoning(interface, &*executor, io);
+    
+    let mut run_bg = false;
+    if let Some(_) = &job_manager {
+        io.print("\nRun task in background? (y/N): ");
+        io.flush();
+        let input = io.read_line();
+        if input.trim().eq_ignore_ascii_case("y") {
+            run_bg = true;
+        }
+    }
+
     run_tool_workflow(config, use_proxy, executor, io, job_manager, 
         |cfg, p, ex, i| poison::execute_poisoning(cfg, p, &*ex, i),
-        |cfg| format!("Poisoning {}", cfg.interface)
+        |cfg| format!("Poisoning {}", cfg.interface),
+        run_bg
     );
 }
 
 fn wifi_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     let config = wifi::configure_wifi(interface, &*executor, io);
+    
+    let mut run_bg = false;
+    if let Some(_) = &job_manager {
+        io.print("\nRun task in background? (y/N): ");
+        io.flush();
+        let input = io.read_line();
+        if input.trim().eq_ignore_ascii_case("y") {
+            run_bg = true;
+        }
+    }
+
     run_tool_workflow(config, use_proxy, executor, io, job_manager, 
         |cfg, p, ex, i| wifi::execute_wifi_audit(cfg, p, &*ex, i),
-        |cfg| format!("WifiAudit {}", cfg.interface)
+        |cfg| format!("WifiAudit {}", cfg.interface),
+        run_bg
     );
 }
 
 fn bluetooth_wrapper(arg: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     let config = bluetooth::configure_bluetooth(arg, &*executor, io);
+    
+    let mut run_bg = false;
+    if let Some(_) = &job_manager {
+        io.print("\nRun task in background? (y/N): ");
+        io.flush();
+        let input = io.read_line();
+        if input.trim().eq_ignore_ascii_case("y") {
+            run_bg = true;
+        }
+    }
+
     run_tool_workflow(config, use_proxy, executor, io, job_manager, 
         |cfg, p, ex, i| bluetooth::execute_bluetooth(cfg, p, &*ex, i),
-        |cfg| format!("Bluetooth {}", cfg.profile.name)
+        |cfg| format!("Bluetooth {}", cfg.profile.name),
+        run_bg
     );
 }
 
 fn sniffer_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     let config = sniffer::configure_sniffer(interface, &*executor, io);
+    
+    let mut run_bg = false;
+    if let Some(_) = &job_manager {
+        io.print("\nRun task in background? (y/N): ");
+        io.flush();
+        let input = io.read_line();
+        if input.trim().eq_ignore_ascii_case("y") {
+            run_bg = true;
+        }
+    }
+
     run_tool_workflow(config, use_proxy, executor, io, job_manager, 
         |cfg, p, ex, i| sniffer::execute_sniffer(cfg, p, &*ex, i),
-        |cfg| format!("Sniffer {}", cfg.interface)
+        |cfg| format!("Sniffer {}", cfg.interface),
+        run_bg
     );
 }
 
