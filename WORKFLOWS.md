@@ -1,36 +1,21 @@
 # PURPL Module Workflows
 
-This document outlines the standard workflows for each module within the **purpl** (formerly `nt_test`) CLI.
+This document outlines the standard workflows for each module within the **purpl** CLI. 
+All modules now follow the **"Always a Job"** pattern, allowing execution in the foreground (blocking with live output) or background (non-blocking).
 
 ## 1. Exploit Search (Searchsploit)
-**Status:** *Improved*
+**Status:** *Refactored for Background Jobs*
 
 The Exploit Search module allows you to find known vulnerabilities for specific services or software versions using the Exploit-DB archive.
 
 ### Workflow
-There are two ways to use this module:
-
-#### A. Direct Search (Interactive)
-1.  Select **Exploit Search** from the main menu.
-2.  When prompted `Enter Search Query or Target IP/XML:`, type your search terms directly.
-    *   *Example:* `apache 2.4`
-    *   *Example:* `windows smb`
-3.  The tool will execute `searchsploit` with your query and display the top 20 results in a formatted table.
-4.  After viewing results, you will be prompted: `Search again? (Enter new query, 'q' to quit)`.
-    *   You can refine your search or start a new one without returning to the main menu.
-    *   Enter `q` or `exit` to return to the main menu.
-
-#### B. Auto-Correlation (from Nmap Scan)
-1.  Perform an **Nmap Scan** on a target first (see Section 2).
-2.  Select **Exploit Search** from the main menu.
-3.  When prompted, enter the **Target IP** of the previously scanned host.
-    *   *Example:* `10.10.10.10`
-4.  The tool will automatically:
-    *   Locate the Nmap XML report for that target.
-    *   Parse all open ports and service versions.
-    *   Query Exploit-DB for each specific service found.
-    *   Display relevant exploits for each service.
-5.  After the auto-scan completes, you will be dropped into the interactive search loop, allowing you to manually search for any specific findings or new queries.
+1.  **Configuration:**
+    *   Prompt: `Enter Search Query or Target IP/XML`.
+    *   *Input:* Search terms (e.g., `apache 2.4`) or Target IP (for auto-correlation).
+2.  **Execution Mode:**
+    *   Prompt: `Run search in background? (y/N)`.
+    *   *Foreground:* Displays results in a table interactively.
+    *   *Background:* Runs headless, output viewable via "View Background Jobs".
 
 ---
 
@@ -38,117 +23,112 @@ There are two ways to use this module:
 Performs network reconnaissance and port scanning.
 
 ### Workflow
-1.  Select **Network Scan** from the menu.
-2.  Enter the **Target IP** or Hostname.
-3.  (Optional) Enter custom ports or ranges when prompted (if running via CLI flags like `--port`).
-4.  The tool runs `nmap_automator.sh` (or internal logic) to:
-    *   Check if host is up (Ping).
-    *   Scan for open ports.
-    *   Fingerprint services and versions.
-5.  Results are saved to `scans/nmap/<target_ip>/`.
+1.  **Configuration:**
+    *   Select **Network Scan**.
+    *   Enter **Target IP**.
+    *   Select **Scan Profile** (Stealth, Connect, Quick, etc.).
+2.  **Execution Mode:**
+    *   Prompt: `Run scan in background? (y/N)`.
+    *   *Foreground:* Shows live Nmap output.
+    *   *Background:* Runs detached.
+3.  **Results:** Saved to `scans/nmap/<target>/`.
 
 ---
 
 ## 3. Web Enumeration (Gobuster)
-Brute-forces hidden directories and files on a web server.
+Brute-forces hidden directories and files.
 
 ### Workflow
-1.  Select **Web Enumeration**.
-2.  Enter the **Target URL** (must include `http://` or `https://`).
-    *   *Example:* `http://10.10.10.10`
-3.  The tool runs `gobuster` using a default wordlist (typically `common.txt` or similar).
-4.  Found paths are displayed and saved to `scans/web/<target>/`.
+1.  **Configuration:**
+    *   Select **Web Enumeration**.
+    *   Enter **Target URL**.
+    *   Select **Profile** (Quick, Deep, Manual).
+2.  **Execution Mode:**
+    *   Prompt: `Run scan in background? (y/N)`.
+3.  **Results:** Saved to `scans/web/<target>/`.
 
 ---
 
 ## 4. Web Fuzzing (Ffuf)
-Fuzzes specific parameters or endpoints.
+Fuzzes parameters or endpoints.
 
 ### Workflow
-1.  Select **Web Fuzzing**.
-2.  Enter the **Target URL** including the `FUZZ` keyword where you want to inject payloads.
-    *   *Example:* `http://site.com/FUZZ` (Directory fuzzing)
-    *   *Example:* `http://site.com/api.php?id=FUZZ` (Parameter fuzzing)
-3.  The tool executes `ffuf` and filters for valid responses (e.g., status 200).
+1.  **Configuration:**
+    *   Select **Web Fuzzing**.
+    *   Enter **Target URL** (with `FUZZ` keyword).
+    *   Select **Wordlist**.
+2.  **Execution Mode:**
+    *   Prompt: `Run fuzzing in background? (y/N)`.
+3.  **Results:** Saved to `scans/web/fuzz_<target>/`.
 
 ---
 
 ## 5. Active Exploitation
-Launches active attacks using tools like SQLMap or Curl.
+Launches active attacks (SQLMap, Curl, Hydra).
 
 ### Workflow
-1.  Select **Exploitation**.
-2.  **Target Selection Menu:**
-    *   The tool will display a numbered list of **Existing Targets** (discovered in previous Nmap scans).
-    *   **Option [New Target]:** Select "New Target (Run Nmap Scan first)" to be redirected to the **Network Scan** module immediately. After scanning, you will return to exploitation with the new target selected.
-    *   **Option [Manual]:** Select "New Target (Manual Input)" to skip scanning and enter an IP directly.
-3.  **Tool Selection:**
-    *   Choose the sub-tool if prompted (or specify via `--tool` in CLI):
-        *   **SQLMap:** For SQL injection testing.
-        *   **Curl:** For sophisticated manual request building/testing.
-        *   **Hydra:** For credential brute-forcing (see below).
-4.  **Execution:** The tool executes the attack, utilizing proxychains if enabled, and logs output to `scans/exploit/<tool>/<target>/`.
-
-### Hydra (Credential Access) Sub-Module
-If **Hydra** is selected within Exploitation:
-1.  **Service Auto-Detection:**
-    *   The tool automatically detects open ports/services from the target's Nmap scan.
-    *   Select a detected service (e.g., `ssh (22/tcp)`) to auto-configure.
-2.  **Profile Selection:**
-    *   **Quick Spray:** Top usernames vs Top passwords.
-    *   **Single User:** Brute-force a specific user.
-    *   **Custom:** Provide your own wordlists.
-3.  **Execution:** Runs `hydra` and saves results to `scans/brute/<target>/`.
+1.  **Configuration:**
+    *   Select **Exploitation**.
+    *   Select **Target** (Existing or New).
+    *   Select **Tool** (SQLMap, Curl, Hydra).
+    *   Configure specific tool parameters (Methods, Headers, Payloads).
+2.  **Execution Mode:**
+    *   Prompt: `Run exploitation in background? (y/N)`.
+3.  **Results:** Saved to `scans/exploit/<tool>/<target>/`.
 
 ---
 
 ## 6. LAN Poisoning (Responder)
-Performs LLMNR/NBT-NS poisoning to capture NTLM hashes.
+LLMNR/NBT-NS poisoning.
 
 ### Workflow
-1.  Select **LAN Poisoning**.
-2.  Enter the **Network Interface** to listen on (e.g., `eth0`, `wlan0`).
-3.  The tool starts `responder` in analysis or active mode (requires Root).
-4.  Captured hashes are logged to the `scans` directory.
+1.  **Configuration:**
+    *   Select **LAN Poisoning**.
+    *   Select **Interface**.
+    *   Select **Profile** (Analyze, Basic, Aggressive).
+2.  **Execution Mode:**
+    *   Prompt: `Run poisoning in background? (y/N)`.
+3.  **Results:** Saved to `scans/poison/`.
 
 ---
 
-## 8. WiFi Audit (Wifite)
-Automated wireless network auditing.
+## 7. WiFi Audit (Wifite)
+Automated wireless auditing.
 
 ### Workflow
-1.  Select **WiFi Audit**.
-2.  Enter the **Wireless Interface** (e.g., `wlan0mon`).
-3.  The tool starts `wifite` to scan for networks and attempt attacks (WEP, WPA Handshake capture, WPS).
-4.  *Note:* Requires a monitor-mode capable wireless card.
+1.  **Configuration:**
+    *   Select **WiFi Audit**.
+    *   Enter **Interface**.
+    *   Select **Profile** (Auto-Pwn, WPS, WPA, etc.).
+2.  **Execution Mode:**
+    *   Prompt: `Run WiFi audit in background? (y/N)`.
+3.  **Results:** Saved to `scans/wifi/`.
 
 ---
 
-## 9. Packet Sniffer (Tcpdump)
-Captures network traffic for analysis, with an interactive configuration wizard.
+## 8. Packet Sniffer (Tcpdump)
+Captures network traffic.
 
 ### Workflow
-1.  Select **Packet Sniffer**.
-2.  **Interface Selection:**
-    *   The tool lists available network interfaces (via `ip link`).
-    *   Select an interface from the list (e.g., `eth0`, `wlan0`) or enter one manually.
-3.  **Filter Selection:**
-    *   **All Traffic:** Capture everything.
-    *   **HTTP/FTP/Telnet:** Focus on unencrypted credentials.
-    *   **DNS:** Monitor domain lookups.
-    *   **ICMP:** Monitor ping traffic.
-    *   **Custom:** Enter a custom BPF filter (e.g., `host 1.2.3.4 and port 80`).
-4.  **Mode Selection:**
-    *   **Passive Capture:** Saves packets to a `.pcap` file in `scans/packets/` for later analysis (e.g., with Wireshark).
-    *   **Live Analysis:** Parses traffic in real-time and prints a summary to the screen (Source, Dest, Protocol, Payload Preview).
+1.  **Configuration:**
+    *   Select **Packet Sniffer**.
+    *   Select **Interface**.
+    *   Select **Filter Profile** (All, HTTP, DNS, Custom).
+    *   Select **Mode** (Capture/Live).
+2.  **Execution Mode:**
+    *   Prompt: `Run sniffer in background? (y/N)`.
+3.  **Results:** Saved to `scans/packets/`.
 
 ---
 
-## 10. Bluetooth Arsenal
-Scans and attacks Bluetooth devices.
+## 9. Bluetooth Arsenal
+Bluetooth scanning and attacks.
 
 ### Workflow
-1.  Select **Bluetooth Arsenal**.
-2.  Enter a **Target MAC** address OR type `scan` to discover devices.
-3.  If `scan` is selected, it runs `hcitool scan` and `hcitool lescan`.
-4.  If a MAC is provided, it attempts to browse services (`sdptool`) and ping flood (`l2ping`) the device.
+1.  **Configuration:**
+    *   Select **Bluetooth Arsenal**.
+    *   Select **Profile** (Scan, Info, Flood).
+    *   Enter **Target MAC** (if required).
+2.  **Execution Mode:**
+    *   Prompt: `Run bluetooth attack in background? (y/N)`.
+3.  **Results:** Saved to `scans/bluetooth/`.

@@ -6,22 +6,29 @@ use crate::history::{append_history, HistoryEntry};
 use crate::executor::CommandExecutor;
 use crate::io_handler::IoHandler;
 
-pub fn run_fuzzer(target: &str, global_wordlist: Option<&str>, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+#[derive(Debug, Clone)]
+pub struct FuzzerConfig {
+    pub target: String,
+    pub wordlist: String,
+    pub extra_args: Option<String>,
+}
+
+pub fn configure_fuzzer(target: &str, global_wordlist: Option<&str>, extra_args: Option<&str>, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<FuzzerConfig> {
     // 1. Validation
     if !target.starts_with("http://") && !target.starts_with("https://") {
         io.println(&format!("{}", "[!] Target must start with http:// or https://".red()));
-        return;
+        return None;
     }
     if !target.contains("FUZZ") {
         io.println(&format!("{}", "[!] Target URL must contain the keyword 'FUZZ' where payload should be injected.".yellow()));
         io.println("    Example: http://example.com/FUZZ or http://example.com/api/user?id=FUZZ");
-        return;
+        return None;
     }
 
     // Check ffuf availability
     if executor.execute_output("ffuf", &["-V"]).is_err() {
         io.println(&format!("{}", "[-] 'ffuf' not found. Please install it (go install github.com/ffuf/ffuf/v2@latest).".red()));
-        return;
+        return None;
     }
 
     // 2. Resolve Wordlist
@@ -30,7 +37,7 @@ pub fn run_fuzzer(target: &str, global_wordlist: Option<&str>, extra_args: Optio
             path.to_string()
         } else {
             io.println(&format!("{}", format!("[!] Custom wordlist '{}' not found.", path).red()));
-            return;
+            return None;
         }
     } else {
         // Default Wordlists
@@ -53,15 +60,23 @@ pub fn run_fuzzer(target: &str, global_wordlist: Option<&str>, extra_args: Optio
                     path.to_string()
                 } else {
                     io.println(&format!("{}", "[!] Wordlist not found.".red()));
-                    return;
+                    return None;
                 }
             }
         }
     };
 
+    Some(FuzzerConfig {
+        target: target.to_string(),
+        wordlist,
+        extra_args: extra_args.map(|s| s.to_string()),
+    })
+}
+
+pub fn execute_fuzzer(config: FuzzerConfig, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     // 3. Setup Output
     // Sanitize target for folder name (remove protocol and FUZZ)
-    let safe_target = target
+    let safe_target = config.target
         .replace("://", "_")
         .replace('/', "_")
         .replace("FUZZ", "X");
@@ -71,21 +86,21 @@ pub fn run_fuzzer(target: &str, global_wordlist: Option<&str>, extra_args: Optio
     fs::create_dir_all(&output_dir).expect("Failed to create output dir");
     let output_file = format!("{}/ffuf.json", output_dir);
 
-    io.println(&format!("{}", format!("\n[+] Starting Ffuf on {}", target).green()));
-    io.println(&format!("    Wordlist: {}", wordlist));
+    io.println(&format!("{}", format!("\n[+] Starting Ffuf on {}", config.target).green()));
+    io.println(&format!("    Wordlist: {}", config.wordlist));
     io.println(&format!("[+] Saving output to: {}", output_file));
 
     // 4. Build Command
     // ffuf -u URL -w WORDLIST -o OUTPUT -of json
     let mut args = vec![
-        "-u".to_string(), target.to_string(),
-        "-w".to_string(), wordlist,
+        "-u".to_string(), config.target.clone(),
+        "-w".to_string(), config.wordlist,
         "-o".to_string(), output_file.clone(),
         "-of".to_string(), "json".to_string(),
         "-c".to_string(), // Colorize
     ];
 
-    if let Some(extras) = extra_args {
+    if let Some(extras) = &config.extra_args {
          for arg in extras.split_whitespace() {
              args.push(arg.to_string());
          }
@@ -107,12 +122,19 @@ pub fn run_fuzzer(target: &str, global_wordlist: Option<&str>, extra_args: Optio
         Ok(s) => {
             if s.success() {
                 io.println(&format!("{}", "\n[+] Fuzzing complete.".green()));
-                let _ = append_history(&HistoryEntry::new("WebFuzz", target, "Success"));
+                let _ = append_history(&HistoryEntry::new("WebFuzz", &config.target, "Success"));
             } else {
                 io.println(&format!("{}", "\n[!] Ffuf failed or was interrupted.".yellow()));
-                let _ = append_history(&HistoryEntry::new("WebFuzz", target, "Failed/Stopped"));
+                let _ = append_history(&HistoryEntry::new("WebFuzz", &config.target, "Failed/Stopped"));
             }
         },
         Err(e) => io.println(&format!("{} {}", "[!] Failed to start process:".red(), e)),
+    }
+}
+
+// Wrapper for backward compatibility
+pub fn run_fuzzer(target: &str, global_wordlist: Option<&str>, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+    if let Some(config) = configure_fuzzer(target, global_wordlist, extra_args, executor, io) {
+        execute_fuzzer(config, use_proxy, executor, io);
     }
 }

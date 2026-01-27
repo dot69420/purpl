@@ -1,4 +1,3 @@
-
 use std::fs;
 use chrono::Local;
 use colored::*;
@@ -27,19 +26,23 @@ impl BtProfile {
     }
 }
 
-pub fn run_bluetooth_attacks(input_arg: &str, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+#[derive(Debug, Clone)]
+pub struct BluetoothConfig {
+    pub profile: BtProfile,
+    pub target_mac: String,
+    pub use_sudo: bool,
+}
+
+pub fn configure_bluetooth(input_arg: &str, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<BluetoothConfig> {
     // 1. Check Dependencies (bluetoothctl is the modern standard)
     if executor.execute_output("bluetoothctl", &["--version"]).is_err() {
         io.println(&format!("{}", "[-] 'bluetoothctl' not found. Please install 'bluez-utils'.".red()));
-        return;
+        return None;
     }
 
     // 2. Check/Reset Adapter
     io.println(&format!("{}", "[*] Checking Bluetooth Adapter status...".blue()));
     let _ = executor.execute_output("rfkill", &["unblock", "bluetooth"]);
-    // bluetoothctl power on is the modern equivalent of hciconfig up, 
-    // but requires interactive or just relying on the service.
-    // We can try 'bluetoothctl power on'
     let _ = executor.execute_output("bluetoothctl", &["power", "on"]);
 
     // 3. Define Profiles
@@ -91,7 +94,7 @@ pub fn run_bluetooth_attacks(input_arg: &str, _use_proxy: bool, executor: &dyn C
     if profile.cmd == "l2ping" {
         if executor.execute_output("l2ping", &[]).is_err() {
              io.println(&format!("{}", "[-] 'l2ping' not found. This tool is deprecated and might be missing from modern 'bluez-utils'.\n    Try installing 'bluez-deprecated-tools' or equivalent.".red()));
-             return;
+             return None;
         }
     }
 
@@ -105,20 +108,10 @@ pub fn run_bluetooth_attacks(input_arg: &str, _use_proxy: bool, executor: &dyn C
         
         if target_mac.is_empty() {
             io.println(&format!("{}", "[!] Target MAC is required for this profile.".red()));
-            return;
+            return None;
         }
     }
 
-    // 6. Setup Output
-    let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let output_dir = format!("scans/bluetooth/{}", date);
-    fs::create_dir_all(&output_dir).expect("Failed to create output dir");
-    let output_file = format!("{}/scan.txt", output_dir);
-
-    io.println(&format!("{}", format!("\n[+] Starting {}...", profile.name).green()));
-    io.println(&format!("[+] Saving output to: {}", output_file));
-
-    // 7. Execute
     // Check Root for specific commands
     let mut use_sudo = false;
     if profile.name.contains("Stress") {
@@ -132,20 +125,38 @@ pub fn run_bluetooth_attacks(input_arg: &str, _use_proxy: bool, executor: &dyn C
                  let status = executor.execute("sudo", &["-v"]);
                  if status.is_err() || !status.unwrap().success() {
                      io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
-                     return;
+                     return None;
                  }
              } else {
                  io.println(&format!("{}", "[-] Root required. Exiting.".red()));
-                 return;
+                 return None;
              }
         }
     }
 
-    let (cmd_bin, args) = build_bluetooth_command(profile.cmd, &profile.args, &target_mac, profile.requires_input, use_sudo);
+    Some(BluetoothConfig {
+        profile,
+        target_mac,
+        use_sudo,
+    })
+}
+
+pub fn execute_bluetooth(config: BluetoothConfig, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+    // 6. Setup Output
+    let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let output_dir = format!("scans/bluetooth/{}", date);
+    fs::create_dir_all(&output_dir).expect("Failed to create output dir");
+    let output_file = format!("{}/scan.txt", output_dir);
+
+    io.println(&format!("{}", format!("\n[+] Starting {}...", config.profile.name).green()));
+    io.println(&format!("[+] Saving output to: {}", output_file));
+
+    // 7. Execute
+    let (cmd_bin, args) = build_bluetooth_command(config.profile.cmd, &config.profile.args, &config.target_mac, config.profile.requires_input, config.use_sudo);
     let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
     // Special handling for bluetoothctl scan to parse it nicely
-    if profile.cmd == "bluetoothctl" && args.contains(&"scan".to_string()) {
+    if config.profile.cmd == "bluetoothctl" && args.contains(&"scan".to_string()) {
         io.println("Scanning for 10 seconds...");
         // 1. Run Scan to populate cache (ignore output)
         let _ = executor.execute_output(&cmd_bin, &args_str);
@@ -179,7 +190,7 @@ pub fn run_bluetooth_attacks(input_arg: &str, _use_proxy: bool, executor: &dyn C
                 }
             }
         }
-    } else if profile.cmd == "l2ping" {
+    } else if config.profile.cmd == "l2ping" {
         // Safe execution for infinite stream/flood
         io.println(&format!("{}", "[-] Running in interactive/stream mode. Press Ctrl+C to stop.".yellow()));
         let status = executor.execute(&cmd_bin, &args_str);
@@ -201,7 +212,14 @@ pub fn run_bluetooth_attacks(input_arg: &str, _use_proxy: bool, executor: &dyn C
         io.println(&format!("Check {} for results.", output_file));
     }
 
-    let _ = append_history(&HistoryEntry::new("Bluetooth", &profile.name, "Executed"));
+    let _ = append_history(&HistoryEntry::new("Bluetooth", &config.profile.name, "Executed"));
+}
+
+// Wrapper
+pub fn run_bluetooth_attacks(input_arg: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+    if let Some(config) = configure_bluetooth(input_arg, executor, io) {
+        execute_bluetooth(config, use_proxy, executor, io);
+    }
 }
 
 pub fn build_bluetooth_command(

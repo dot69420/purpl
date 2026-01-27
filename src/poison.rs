@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::Path;
 use chrono::Local;
-use colored::*;
 use crate::history::{append_history, HistoryEntry};
 use crate::executor::CommandExecutor;
 use crate::io_handler::IoHandler;
@@ -23,35 +22,38 @@ impl PoisonProfile {
     }
 }
 
-pub fn run_poisoning(interface_input: &str, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    // 1. Check Root & Prompt for Sudo
+#[derive(Debug, Clone)]
+pub struct PoisonConfig {
+    pub interface: String,
+    pub profile: PoisonProfile,
+    pub use_sudo: bool,
+}
+
+pub fn configure_poisoning(interface_input: &str, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<PoisonConfig> {
     let mut use_sudo = false;
     if !executor.is_root() {
-        io.print(&format!("\n{} {} [Y/n]: ", "[!]".red(), "LAN Poisoning requires ROOT privileges. Attempt to elevate with sudo?".yellow().bold()));
+        io.print("\n[!] LAN Poisoning requires ROOT privileges. Attempt to elevate with sudo? [Y/n]: ");
         io.flush();
         let input = io.read_line();
         
         if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
              use_sudo = true;
              let status = executor.execute("sudo", &["-v"]);
-            
              if status.is_err() || !status.unwrap().success() {
-                 io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
-                 return;
+                 io.println("[-] Sudo authentication failed. Aborting.");
+                 return None;
              }
         } else {
-             io.println(&format!("{}", "[-] Root required. Exiting.".red()));
-             return;
+             io.println("[-] Root required. Exiting.");
+             return None;
         }
     }
 
-    // 2. Check Dependency
     if executor.execute_output("responder", &["--help"]).is_err() {
-        io.println(&format!("{}", "[-] 'responder' not found. Please install it (sudo pacman -S responder).".red()));
-        return;
+        io.println("[-] 'responder' not found. Please install it.");
+        return None;
     }
 
-    // 3. Select Interface (if not provided or empty)
     let interface = if interface_input.is_empty() {
         select_interface(executor, io)
     } else {
@@ -59,33 +61,19 @@ pub fn run_poisoning(interface_input: &str, _use_proxy: bool, executor: &dyn Com
     };
 
     if interface.is_empty() {
-        io.println(&format!("{}", "[!] No interface selected.".red()));
-        return;
+        io.println("[!] No interface selected.");
+        return None;
     }
 
-    // 4. Define Profiles
     let profiles = vec![
-        PoisonProfile::new(
-            "Analyze Mode",
-            "Passive. Listen for requests, do NOT poison. (Safe)",
-            &["-A"]
-        ),
-        PoisonProfile::new(
-            "Basic Poisoning",
-            "Respond to LLMNR/NBT-NS queries. Capture hashes.",
-            &["-w", "-r", "-f"]
-        ),
-        PoisonProfile::new(
-            "Aggressive",
-            "Force WPAD authentication + DHCP (Risky).",
-            &["-w", "-r", "-f", "--wpad", "--dhcp-wpad"] // Careful with DHCP
-        ),
+        PoisonProfile::new("Analyze Mode", "Passive. Listen only.", &["-A"]),
+        PoisonProfile::new("Basic Poisoning", "Respond to LLMNR/NBT-NS.", &["-w", "-r", "-f"]),
+        PoisonProfile::new("Aggressive", "Force WPAD + DHCP.", &["-w", "-r", "-f", "--wpad", "--dhcp-wpad"]),
     ];
 
-    // 5. Select Profile
-    io.println(&format!("\n{}", "Select Poisoning Profile:".blue().bold()));
+    io.println("\nSelect Poisoning Profile:");
     for (i, p) in profiles.iter().enumerate() {
-        io.println(&format!("[{}] {} - {}", i + 1, p.name.green(), p.description));
+        io.println(&format!("[{}] {} - {}", i + 1, p.name, p.description));
     }
 
     io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
@@ -102,53 +90,47 @@ pub fn run_poisoning(interface_input: &str, _use_proxy: bool, executor: &dyn Com
         profiles[0].clone()
     };
 
-    // 6. Setup Output
-    // Responder is noisy. We'll run it interactively but maybe try to move logs after.
-    // Responder logs usually go to /usr/share/responder/logs/ or local logs/
-    // We will assume interactive run for now as it's a TUI tool.
-    
+    Some(PoisonConfig {
+        interface,
+        profile,
+        use_sudo,
+    })
+}
+
+pub fn execute_poisoning(config: PoisonConfig, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let output_dir = format!("scans/poison/{}", date);
     fs::create_dir_all(&output_dir).expect("Failed to create output dir");
 
-    io.println(&format!("{}", format!("\n[+] Starting Responder on {}", interface).green()));
-    io.println(&format!("{}", format!("[+] Profile: {}", profile.name).cyan()));
-    io.println(&format!("{}", "[!] Press Ctrl+C to stop.".yellow()));
+    io.println(&format!("\n[+] Starting Responder on {}", config.interface));
+    io.println(&format!("[+] Profile: {}", config.profile.name));
+    io.println("[!] Press Ctrl+C to stop.");
 
-    // 7. Execute
-    let (responder_cmd, responder_args) = build_responder_command("responder", &interface, &profile.flags, use_sudo);
+    let (responder_cmd, responder_args) = build_responder_command("responder", &config.interface, &config.profile.flags, config.use_sudo);
     let responder_args_str: Vec<&str> = responder_args.iter().map(|s| s.as_str()).collect();
-
-    // We use sudo implicitly because we checked root, but if we are not root (e.g. strict confinement), we fail.
-    // But we checked geteuid 0.
 
     let status = executor.execute(&responder_cmd, &responder_args_str);
 
-    // 8. Post-Run Cleanup / Log Retrieval
-    // Try to find logs and move them?
-    // Common path: /usr/share/responder/logs/
-    // or ./logs/
-    
-    // Check local logs first
     if Path::new("logs").exists() {
          let _ = fs::rename("logs", Path::new(&output_dir).join("logs"));
-         io.println(&format!("{}", format!("[+] Logs moved to {}", output_dir).green()));
+         io.println(&format!("[+] Logs moved to {}", output_dir));
     }
 
     match status {
         Ok(_) => {
-             let _ = append_history(&HistoryEntry::new("Poisoning", &interface, "Executed"));
+             let _ = append_history(&HistoryEntry::new("Poisoning", &config.interface, "Executed"));
         },
-        Err(e) => io.println(&format!("{} {}", "[!] Failed to start process:".red(), e)),
+        Err(e) => io.println(&format!("[!] Failed to start process: {}", e)),
     }
 }
 
-pub fn build_responder_command(
-    base_cmd: &str,
-    interface: &str,
-    flags: &[&str],
-    use_sudo: bool
-) -> (String, Vec<String>) {
+pub fn run_poisoning(interface_input: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+    if let Some(config) = configure_poisoning(interface_input, executor, io) {
+        execute_poisoning(config, use_proxy, executor, io);
+    }
+}
+
+pub fn build_responder_command(base_cmd: &str, interface: &str, flags: &[&str], use_sudo: bool) -> (String, Vec<String>) {
     let mut args = vec!["-I".to_string(), interface.to_string()];
     args.extend(flags.iter().map(|s| s.to_string()));
     
@@ -162,7 +144,6 @@ pub fn build_responder_command(
 }
 
 fn select_interface(executor: &dyn CommandExecutor, io: &dyn IoHandler) -> String {
-    // List interfaces using 'ip link'
     let output = executor.execute_output("ip", &["link"]);
     if let Ok(out) = output {
         let out_str = String::from_utf8_lossy(&out.stdout);
@@ -180,10 +161,10 @@ fn select_interface(executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Strin
         }
 
         if ifaces.is_empty() {
-            return "eth0".to_string(); // Fallback
+            return "eth0".to_string();
         }
 
-        io.println(&format!("\n{}", "Available Interfaces:".blue()));
+        io.println("\nAvailable Interfaces:");
         for (i, iface) in ifaces.iter().enumerate() {
             io.println(&format!("[{}] {}", i + 1, iface));
         }

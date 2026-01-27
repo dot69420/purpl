@@ -13,10 +13,10 @@ mod fuzzer;
 pub mod executor;
 pub mod io_handler;
 pub mod job_manager;
+pub mod dashboard;
 
 use clap::{Parser, Subcommand};
 use std::process::Command;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use std::thread;
@@ -237,88 +237,246 @@ fn nmap_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executo
     }
 }
 
-fn web_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
-    web::run_web_enum(target, extra_args, use_proxy, &*executor, io);
-}
-
-fn fuzzer_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
-    fuzzer::run_fuzzer(target, None, extra_args, use_proxy, &*executor, io);
-}
-
-fn exploit_search_wrapper(target: &str, _extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
-    search_exploit::run_searchsploit(target, use_proxy, &*executor, io);
-}
-
-fn exploit_active_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
-    exploit::run_exploitation_tool(target, None, extra_args, use_proxy, &*executor, io);
-}
-
-fn poison_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
-    poison::run_poisoning(interface, use_proxy, &*executor, io);
-}
-
-fn wifi_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
-    wifi::run_wifi_audit(interface, use_proxy, &*executor, io);
-}
-
-fn bluetooth_wrapper(arg: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
-    bluetooth::run_bluetooth_attacks(arg, use_proxy, &*executor, io);
-}
-
-fn sniffer_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, _jm: Option<Arc<JobManager>>) {
-    sniffer::run_sniffer(interface, use_proxy, &*executor, io);
-}
-
-fn view_background_jobs(job_manager: &JobManager, io: &dyn IoHandler) {
-    loop {
-        io.println(&format!("\n-- {} --", "Background Jobs".cyan().bold()));
-        let jobs = job_manager.list_jobs();
-        
-        if jobs.is_empty() {
-            io.println("No background jobs.");
-            io.print("\nPress Enter to return...");
+fn web_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
+    if let Some(config) = web::configure_web_enum(target, extra_args, &*executor, io) {
+        let mut run_bg = false;
+        if let Some(_) = &job_manager {
+            io.print("\nRun scan in background? (y/N): ");
             io.flush();
-            let _ = io.read_line();
-            return;
+            let input = io.read_line();
+            if input.trim().eq_ignore_ascii_case("y") {
+                run_bg = true;
+            }
         }
 
-        io.println(&format!("{:<5} | {:<10} | {:<20} | {:<20}", "ID", "Status", "Start Time", "Name"));
-        io.println(&"-".repeat(70));
-        
-        for job in &jobs {
-            let status = job.status.lock().unwrap();
-            let status_str = match *status {
-                crate::job_manager::JobStatus::Running => "Running".yellow(),
-                crate::job_manager::JobStatus::Completed => "Completed".green(),
-                crate::job_manager::JobStatus::Failed => "Failed".red(),
-            };
-            io.println(&format!("{:<5} | {:<10} | {:<20} | {:<20}", 
-                job.id, status_str, job.start_time, job.name.chars().take(20).collect::<String>()));
-        }
-        
-        io.println("\n[ID] to view logs, [R]efresh, [0] Back");
-        io.print("Select: ");
-        io.flush();
-        let input = io.read_line();
-        let input_trim = input.trim();
-        
-        if input_trim == "0" { break; }
-        if input_trim.eq_ignore_ascii_case("r") || input_trim.is_empty() { continue; }
-        
-        if let Ok(id) = input_trim.parse::<usize>() {
-            if let Some(job) = job_manager.get_job(id) {
-                io.println(&format!("\n-- Output for Job #{} ({}) --", job.id, job.name));
-                io.println(&job.io.get_output());
-                io.println("\n-- End of Output --");
-                io.print("Press Enter to continue...");
-                io.flush();
-                let _ = io.read_line();
-            } else {
-                io.println(&format!("{}", "[!] Invalid Job ID.".red()));
+        if run_bg {
+            if let Some(jm) = job_manager {
+                let config = config.clone();
+                let executor = executor.clone();
+                let proxy = use_proxy;
+                let name = format!("WebEnum {}", config.target);
+                
+                jm.spawn_job(&name, move |ex, io| {
+                    web::execute_web_enum(config, proxy, &*ex, io);
+                }, executor, run_bg);
+                io.println(&format!("{}", "Job started in background.".green()));
             }
+        } else {
+            web::execute_web_enum(config, use_proxy, &*executor, io);
         }
     }
 }
+
+fn fuzzer_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
+    if let Some(config) = fuzzer::configure_fuzzer(target, None, extra_args, &*executor, io) {
+        let mut run_bg = false;
+        if let Some(_) = &job_manager {
+            io.print("\nRun fuzzing in background? (y/N): ");
+            io.flush();
+            let input = io.read_line();
+            if input.trim().eq_ignore_ascii_case("y") {
+                run_bg = true;
+            }
+        }
+
+        if run_bg {
+            if let Some(jm) = job_manager {
+                let config = config.clone();
+                let executor = executor.clone();
+                let proxy = use_proxy;
+                let name = format!("Fuzzer {}", config.target);
+                
+                jm.spawn_job(&name, move |ex, io| {
+                    fuzzer::execute_fuzzer(config, proxy, &*ex, io);
+                }, executor, run_bg);
+                io.println(&format!("{}", "Job started in background.".green()));
+            }
+        } else {
+            fuzzer::execute_fuzzer(config, use_proxy, &*executor, io);
+        }
+    }
+}
+
+fn exploit_search_wrapper(target: &str, _extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
+    if let Some(config) = search_exploit::configure_searchsploit(target, &*executor, io) {
+        let mut run_bg = false;
+        if let Some(_) = &job_manager {
+            io.print("\nRun search in background? (y/N): ");
+            io.flush();
+            let input = io.read_line();
+            if input.trim().eq_ignore_ascii_case("y") {
+                run_bg = true;
+            }
+        }
+
+        if run_bg {
+            if let Some(jm) = job_manager {
+                let config = config.clone();
+                let executor = executor.clone();
+                let proxy = use_proxy;
+                let name = format!("SearchSploit {}", config.query);
+                
+                jm.spawn_job(&name, move |ex, io| {
+                    search_exploit::execute_searchsploit(config, proxy, &*ex, io);
+                }, executor, run_bg);
+                io.println(&format!("{}", "Job started in background.".green()));
+            }
+        } else {
+            search_exploit::execute_searchsploit(config, use_proxy, &*executor, io);
+        }
+    }
+}
+
+fn exploit_active_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
+    if let Some(config) = exploit::configure_exploitation(target, None, extra_args, &*executor, io) {
+        let mut run_bg = false;
+        if let Some(_) = &job_manager {
+            io.print("\nRun exploitation in background? (y/N): ");
+            io.flush();
+            let input = io.read_line();
+            if input.trim().eq_ignore_ascii_case("y") {
+                run_bg = true;
+            }
+        }
+
+        if run_bg {
+            if let Some(jm) = job_manager {
+                let config = config.clone();
+                let executor = executor.clone();
+                let proxy = use_proxy;
+                let name = "Exploitation Job"; 
+                
+                jm.spawn_job(name, move |ex, io| {
+                    exploit::execute_exploitation(config, proxy, &*ex, io);
+                }, executor, run_bg);
+                io.println(&format!("{}", "Job started in background.".green()));
+            }
+        } else {
+            exploit::execute_exploitation(config, use_proxy, &*executor, io);
+        }
+    }
+}
+
+fn poison_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
+    if let Some(config) = poison::configure_poisoning(interface, &*executor, io) {
+        let mut run_bg = false;
+        if let Some(_) = &job_manager {
+            io.print("\nRun poisoning in background? (y/N): ");
+            io.flush();
+            let input = io.read_line();
+            if input.trim().eq_ignore_ascii_case("y") {
+                run_bg = true;
+            }
+        }
+
+        if run_bg {
+            if let Some(jm) = job_manager {
+                let config = config.clone();
+                let executor = executor.clone();
+                let proxy = use_proxy;
+                let name = format!("Poisoning {}", config.interface);
+                
+                jm.spawn_job(&name, move |ex, io| {
+                    poison::execute_poisoning(config, proxy, &*ex, io);
+                }, executor, run_bg);
+                io.println(&format!("{}", "Job started in background.".green()));
+            }
+        } else {
+            poison::execute_poisoning(config, use_proxy, &*executor, io);
+        }
+    }
+}
+
+fn wifi_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
+    if let Some(config) = wifi::configure_wifi(interface, &*executor, io) {
+        let mut run_bg = false;
+        if let Some(_) = &job_manager {
+            io.print("\nRun WiFi audit in background? (y/N): ");
+            io.flush();
+            let input = io.read_line();
+            if input.trim().eq_ignore_ascii_case("y") {
+                run_bg = true;
+            }
+        }
+
+        if run_bg {
+            if let Some(jm) = job_manager {
+                let config = config.clone();
+                let executor = executor.clone();
+                let proxy = use_proxy;
+                let name = format!("WifiAudit {}", config.interface);
+                
+                jm.spawn_job(&name, move |ex, io| {
+                    wifi::execute_wifi_audit(config, proxy, &*ex, io);
+                }, executor, run_bg);
+                io.println(&format!("{}", "Job started in background.".green()));
+            }
+        } else {
+            wifi::execute_wifi_audit(config, use_proxy, &*executor, io);
+        }
+    }
+}
+
+fn bluetooth_wrapper(arg: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
+    if let Some(config) = bluetooth::configure_bluetooth(arg, &*executor, io) {
+        let mut run_bg = false;
+        if let Some(_) = &job_manager {
+            io.print("\nRun bluetooth attack in background? (y/N): ");
+            io.flush();
+            let input = io.read_line();
+            if input.trim().eq_ignore_ascii_case("y") {
+                run_bg = true;
+            }
+        }
+
+        if run_bg {
+            if let Some(jm) = job_manager {
+                let config = config.clone();
+                let executor = executor.clone();
+                let proxy = use_proxy;
+                let name = format!("Bluetooth {}", config.profile.name);
+                
+                jm.spawn_job(&name, move |ex, io| {
+                    bluetooth::execute_bluetooth(config, proxy, &*ex, io);
+                }, executor, run_bg);
+                io.println(&format!("{}", "Job started in background.".green()));
+            }
+        } else {
+            bluetooth::execute_bluetooth(config, use_proxy, &*executor, io);
+        }
+    }
+}
+
+fn sniffer_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
+    if let Some(config) = sniffer::configure_sniffer(interface, &*executor, io) {
+        let mut run_bg = false;
+        if let Some(_) = &job_manager {
+            io.print("\nRun sniffer in background? (y/N): ");
+            io.flush();
+            let input = io.read_line();
+            if input.trim().eq_ignore_ascii_case("y") {
+                run_bg = true;
+            }
+        }
+
+        if run_bg {
+            if let Some(jm) = job_manager {
+                let config = config.clone();
+                let executor = executor.clone();
+                let proxy = use_proxy;
+                let name = format!("Sniffer {}", config.interface);
+                
+                jm.spawn_job(&name, move |ex, io| {
+                    sniffer::execute_sniffer(config, proxy, &*ex, io);
+                }, executor, run_bg);
+                io.println(&format!("{}", "Job started in background.".green()));
+            }
+        } else {
+            sniffer::execute_sniffer(config, use_proxy, &*executor, io);
+        }
+    }
+}
+
 
 pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Arc<JobManager>) {
     let main_menu = vec![
@@ -338,11 +496,9 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecut
         for (i, tool) in main_menu.iter().enumerate() {
             io.println(&format!("[{}] {}", i + 1, tool.name));
         }
-        io.println(&format!("[{}] View Scan Results", main_menu.len() + 1));
-        io.println(&format!("[{}] View History", main_menu.len() + 2));
-        io.println(&format!("[{}] View Background Jobs", main_menu.len() + 3));
-        io.println(&format!("[{}] Toggle Proxychains", main_menu.len() + 4));
-        io.println(&format!("[{}] Exit", main_menu.len() + 5));
+        io.println(&format!("[{}] Dashboard (Results & History)", main_menu.len() + 1));
+        io.println(&format!("[{}] Toggle Proxychains", main_menu.len() + 2));
+        io.println(&format!("[{}] Exit", main_menu.len() + 3));
         
         io.print(&format!("\n{}", "Select an option: ".green()));
         io.flush();
@@ -352,6 +508,7 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecut
         
         if let Ok(choice_idx) = choice_str.trim().parse::<usize>() {
             if choice_idx > 0 && choice_idx <= main_menu.len() {
+                // ... (Existing tool execution logic) ...
                 let tool = &main_menu[choice_idx - 1];
                 let mut arg = String::new();
                 
@@ -369,17 +526,10 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecut
                     func(&arg, None, use_proxy, executor.clone(), io, Some(job_manager.clone()));
                 }
             } else if choice_idx == main_menu.len() + 1 {
-                view_scan_results(io);
+                dashboard::show_dashboard(&job_manager, io);
             } else if choice_idx == main_menu.len() + 2 {
-                print_history(io);
-                io.print("\nPress Enter to return...");
-                io.flush();
-                let _ = io.read_line();
-            } else if choice_idx == main_menu.len() + 3 {
-                view_background_jobs(&job_manager, io);
-            } else if choice_idx == main_menu.len() + 4 {
                 use_proxy = !use_proxy;
-            } else if choice_idx == main_menu.len() + 5 {
+            } else if choice_idx == main_menu.len() + 3 {
                 io.println("\nExiting. Stay safe!");
                 break;
             } else {
@@ -462,132 +612,6 @@ fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: Arc<dy
     }
 }
 
-fn view_scan_results(io: &dyn IoHandler) {
-    if !Path::new("scans").exists() {
-        io.println(&format!("{}", "[!] No scans found yet.".yellow()));
-        return;
-    }
-
-    loop {
-        let tools_dir = match std::fs::read_dir("scans") {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-        let mut tool_folders: Vec<_> = tools_dir.flatten()
-            .filter(|e| e.path().is_dir())
-            .collect();
-        tool_folders.sort_by_key(|t| t.file_name());
-
-        if tool_folders.is_empty() {
-             io.println(&format!("{}", "No scan data found.".yellow()));
-             return;
-        }
-
-        io.println(&format!("\n{}", "--- Scan Results Viewer ---".cyan().bold()));
-        io.println(&format!("{}", "Select Tool Category:".blue().bold()));
-        io.println("0. Back to Main Menu");
-        for (i, tool) in tool_folders.iter().enumerate() {
-            io.println(&format!("[{}] {}", i + 1, tool.file_name().to_string_lossy()));
-        }
-        
-        io.print("\nSelect tool: ");
-        io.flush();
-        let t_in = io.read_line();
-        let t_idx = t_in.trim().parse::<usize>().unwrap_or(9999);
-
-        if t_idx == 0 { break; }
-        if t_idx > tool_folders.len() { continue; }
-
-        let selected_tool = &tool_folders[t_idx - 1];
-        let tool_path = selected_tool.path();
-
-        loop {
-            let mut next_level_items: Vec<_> = std::fs::read_dir(&tool_path).unwrap()
-                .flatten()
-                .filter(|e| e.path().is_dir())
-                .collect();
-            
-            if next_level_items.is_empty() {
-                 io.println(&format!("{}", "[!] No records found.".yellow()));
-                 break;
-            }
-
-            let is_dates_only = next_level_items.iter().all(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                name.len() >= 8 && name.chars().take(8).all(|c| c.is_digit(10))
-            });
-
-            if is_dates_only {
-                next_level_items.sort_by_key(|e| e.file_name());
-                next_level_items.reverse();
-            } else {
-                 next_level_items.sort_by_key(|e| e.file_name());
-            }
-
-            io.println(&format!("\n{}", format!("-- {} > Records --", selected_tool.file_name().to_string_lossy()).cyan()));
-            if is_dates_only {
-                 io.println(&format!("{}", "Select Scan Date:".blue().bold()));
-            } else {
-                 io.println(&format!("{}", "Select Target:".blue().bold()));
-            }
-            io.println("0. Back");
-            
-            for (i, item) in next_level_items.iter().enumerate() {
-                 let name = item.file_name().to_string_lossy().to_string();
-                 io.println(&format!("[{}] {}", i + 1, name));
-            }
-
-            io.print("\nSelect: ");
-            io.flush();
-            let item_in = io.read_line();
-            let item_idx = item_in.trim().parse::<usize>().unwrap_or(9999);
-
-            if item_idx == 0 { break; }
-            if item_idx > next_level_items.len() { continue; }
-            
-            let selected_item = &next_level_items[item_idx - 1];
-
-            if is_dates_only {
-                report::display_scan_report(&selected_item.path(), io);
-                io.print("\nPress Enter to continue...");
-                io.flush();
-                let _ = io.read_line();
-            } else {
-                loop {
-                    let mut dates: Vec<_> = std::fs::read_dir(selected_item.path()).unwrap()
-                        .flatten()
-                        .filter(|e| e.path().is_dir())
-                        .collect();
-                    
-                    if dates.is_empty() { break; }
-
-                    dates.sort_by_key(|d| d.file_name());
-                    dates.reverse();
-
-                    io.println(&format!("\n{}", format!("-- {} > {} > Scans --", selected_tool.file_name().to_string_lossy(), selected_item.file_name().to_string_lossy()).cyan()));
-                    io.println("0. Back");
-
-                    for (j, date) in dates.iter().enumerate() {
-                        io.println(&format!("[{}] {}", j + 1, date.file_name().to_string_lossy()));
-                    }
-
-                    io.print("\nSelect scan date: ");
-                    io.flush();
-                    let d_in = io.read_line();
-                    let d_idx = d_in.trim().parse::<usize>().unwrap_or(9999);
-
-                    if d_idx == 0 { break; }
-                    if d_idx > dates.len() { continue; }
-
-                    report::display_scan_report(&dates[d_idx - 1].path(), io);
-                    io.print("\nPress Enter to continue...");
-                    io.flush();
-                    let _ = io.read_line();
-                }
-            }
-        }
-    }
-}
 
 fn main() {
     let _ = ctrlc::set_handler(move || {
@@ -658,6 +682,6 @@ fn main() {
     run_interactive_mode(use_proxy, executor, &io, job_manager);
 }
 
-#[cfg(test)]
-#[path = "main_bg_tests.rs"]
-mod bg_tests;
+// ... Wrappers ...
+
+

@@ -117,6 +117,20 @@ pub fn display_scan_report(scan_dir: &Path, io: &dyn IoHandler) {
         any_report_found = true;
     }
 
+    // 7. Look for Ffuf Report (ffuf.json)
+    let ffuf_scan = scan_dir.join("ffuf.json");
+    if ffuf_scan.exists() {
+        print_text_report(&ffuf_scan, io, "Fuzzing Report (JSON)");
+        any_report_found = true;
+    }
+
+    // 8. Look for Host Discovery (host_discovery.txt)
+    let host_disc = scan_dir.join("host_discovery.txt");
+    if host_disc.exists() {
+        print_text_report(&host_disc, io, "Host Discovery Log");
+        any_report_found = true;
+    }
+
     if !any_report_found {
         io.println(&format!("{}", "No recognized report files (Nmap XML, Wifite JSON, Gobuster, Hydra, Sniffer/Generic TXT) found in this directory.".yellow()));
     }

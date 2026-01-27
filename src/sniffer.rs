@@ -26,7 +26,15 @@ impl SniffProfile {
     }
 }
 
-pub fn run_sniffer(interface_input: &str, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+#[derive(Debug, Clone)]
+pub struct SnifferConfig {
+    pub interface: String,
+    pub profile: SniffProfile,
+    pub mode: String, // "capture" or "live"
+    pub use_sudo: bool,
+}
+
+pub fn configure_sniffer(interface_input: &str, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<SnifferConfig> {
     // 1. Check Root
     let mut use_sudo = false;
     if !executor.is_root() {
@@ -39,11 +47,11 @@ pub fn run_sniffer(interface_input: &str, _use_proxy: bool, executor: &dyn Comma
              // Simple sudo check
              if executor.execute("sudo", &["-v"]).is_err() {
                  io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
-                 return;
+                 return None;
              }
         } else {
              io.println(&format!("{}", "[-] Root required. Exiting.".red()));
-             return;
+             return None;
         }
     }
 
@@ -57,7 +65,7 @@ pub fn run_sniffer(interface_input: &str, _use_proxy: bool, executor: &dyn Comma
     };
 
     if interface.is_empty() {
-        return; // User cancelled
+        return None; // User cancelled
     }
 
     // 3. Select Filter Profile
@@ -131,6 +139,15 @@ pub fn run_sniffer(interface_input: &str, _use_proxy: bool, executor: &dyn Comma
         _ => "capture"
     };
 
+    Some(SnifferConfig {
+        interface,
+        profile: selected_profile,
+        mode: mode.to_string(),
+        use_sudo,
+    })
+}
+
+pub fn execute_sniffer(config: SnifferConfig, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     // 5. Setup Output
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let output_dir = format!("scans/packets/{}", date);
@@ -139,22 +156,22 @@ pub fn run_sniffer(interface_input: &str, _use_proxy: bool, executor: &dyn Comma
     let pcap_file = format!("{}/capture.pcap", output_dir);
     let report_file = format!("{}/report.txt", output_dir);
 
-    io.println(&format!("{}", format!("\n[+] Starting {} on {}", selected_profile.name, interface).green()));
-    if !selected_profile.filter.is_empty() {
-        io.println(&format!("    Filter: {}", selected_profile.filter.cyan()));
+    io.println(&format!("{}", format!("\n[+] Starting {} on {}", config.profile.name, config.interface).green()));
+    if !config.profile.filter.is_empty() {
+        io.println(&format!("    Filter: {}", config.profile.filter.cyan()));
     }
 
-    if mode == "capture" {
+    if config.mode == "capture" {
         io.println(&format!("[+] Saving packets to: {}", pcap_file));
         
-        let mut args = vec!["-i", &interface, "-w", &pcap_file];
-        if !selected_profile.filter.is_empty() {
-            args.push(&selected_profile.filter);
+        let mut args = vec!["-i", &config.interface, "-w", &pcap_file];
+        if !config.profile.filter.is_empty() {
+            args.push(&config.profile.filter);
         }
 
-        let cmd = if use_sudo { "sudo" } else { "tcpdump" };
+        let cmd = if config.use_sudo { "sudo" } else { "tcpdump" };
         let mut final_args = Vec::new();
-        if use_sudo {
+        if config.use_sudo {
             final_args.push("tcpdump");
         }
         final_args.extend(args);
@@ -165,18 +182,18 @@ pub fn run_sniffer(interface_input: &str, _use_proxy: bool, executor: &dyn Comma
         let _ = executor.execute(cmd, &final_args); // This blocks until Ctrl+C usually
 
         io.println(&format!("\n{}", "Capture saved.".green()));
-        let _ = append_history(&HistoryEntry::new("Sniffer (PCAP)", &interface, &pcap_file));
+        let _ = append_history(&HistoryEntry::new("Sniffer (PCAP)", &config.interface, &pcap_file));
 
     } else {
         // LIVE MODE
         io.println("[+] Live parsing... Press Ctrl+C to stop.");
         
         // Ensure -l (buffered) and -A (ascii) are present for live parsing
-        let mut args = selected_profile.args.clone();
+        let mut args = config.profile.args.clone();
         if !args.contains(&"-l") { args.push("-l"); }
         if !args.contains(&"-A") { args.push("-A"); } // Force ASCII for live view
         
-        let (tcpdump_cmd, tcpdump_args) = build_sniffer_command("tcpdump", &interface, &args, &selected_profile.filter, use_sudo);
+        let (tcpdump_cmd, tcpdump_args) = build_sniffer_command("tcpdump", &config.interface, &args, &config.profile.filter, config.use_sudo);
         let args_str: Vec<&str> = tcpdump_args.iter().map(|s| s.as_str()).collect();
 
         let reader = executor.spawn_stdout(&tcpdump_cmd, &args_str).expect("Failed to run tcpdump");
@@ -205,7 +222,14 @@ pub fn run_sniffer(interface_input: &str, _use_proxy: bool, executor: &dyn Comma
         }
         
         io.println(&format!("{}", "Analysis finished.".yellow()));
-        let _ = append_history(&HistoryEntry::new("Sniffer (Live)", &interface, "Finished"));
+        let _ = append_history(&HistoryEntry::new("Sniffer (Live)", &config.interface, "Finished"));
+    }
+}
+
+// Wrapper
+pub fn run_sniffer(interface_input: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+    if let Some(config) = configure_sniffer(interface_input, executor, io) {
+        execute_sniffer(config, use_proxy, executor, io);
     }
 }
 
