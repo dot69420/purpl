@@ -21,14 +21,14 @@ pub struct Job {
 }
 
 impl Job {
-    pub fn new(id: usize, name: &str) -> Self {
+    pub fn new(id: usize, name: &str, background: bool) -> Self {
         Self {
             id,
             name: name.to_string(),
             status: Arc::new(Mutex::new(JobStatus::Running)),
             start_time: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             end_time: Arc::new(Mutex::new(None)),
-            io: CapturingIoHandler::new(),
+            io: CapturingIoHandler::new(!background), // Passthrough if NOT background
         }
     }
 
@@ -50,7 +50,7 @@ impl JobManager {
         }
     }
 
-    pub fn spawn_job<F>(&self, name: &str, task: F, executor: Arc<dyn CommandExecutor + Send + Sync>) 
+    pub fn spawn_job<F>(&self, name: &str, task: F, executor: Arc<dyn CommandExecutor + Send + Sync>, background: bool) -> Arc<Job>
     where
         F: FnOnce(Arc<dyn CommandExecutor + Send + Sync>, &dyn IoHandler) + Send + 'static,
     {
@@ -58,7 +58,7 @@ impl JobManager {
         let id = *id_lock;
         *id_lock += 1;
 
-        let job = Arc::new(Job::new(id, name));
+        let job = Arc::new(Job::new(id, name, background));
         
         {
             let mut jobs_lock = self.jobs.lock().unwrap();
@@ -80,6 +80,8 @@ impl JobManager {
             
             *job_clone.end_time.lock().unwrap() = Some(Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
         });
+
+        job
     }
 
     pub fn list_jobs(&self) -> Vec<Arc<Job>> {

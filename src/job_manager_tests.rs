@@ -12,7 +12,7 @@ fn test_spawn_and_complete_job() {
     job_manager.spawn_job("Test Job", |_, io| {
         io.println("Job output");
         thread::sleep(Duration::from_millis(50));
-    }, executor);
+    }, executor, true);
 
     let jobs = job_manager.list_jobs();
     assert_eq!(jobs.len(), 1);
@@ -36,8 +36,8 @@ fn test_multiple_jobs() {
     let job_manager = JobManager::new();
     let executor = Arc::new(MockExecutor::new());
 
-    job_manager.spawn_job("Job 1", |_, _| {}, executor.clone());
-    job_manager.spawn_job("Job 2", |_, _| {}, executor.clone());
+    job_manager.spawn_job("Job 1", |_, _| {}, executor.clone(), true);
+    job_manager.spawn_job("Job 2", |_, _| {}, executor.clone(), true);
 
     let jobs = job_manager.list_jobs();
     assert_eq!(jobs.len(), 2);
@@ -50,7 +50,7 @@ fn test_get_job() {
     let job_manager = JobManager::new();
     let executor = Arc::new(MockExecutor::new());
 
-    job_manager.spawn_job("Job 1", |_, _| {}, executor);
+    job_manager.spawn_job("Job 1", |_, _| {}, executor, true);
 
     let job = job_manager.get_job(1);
     assert!(job.is_some());

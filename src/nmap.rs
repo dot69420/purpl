@@ -8,7 +8,7 @@ use crate::history::{append_history, HistoryEntry};
 use crate::executor::CommandExecutor;
 use crate::io_handler::IoHandler;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScanProfile {
     pub name: String,
     pub description: String,
@@ -24,6 +24,75 @@ impl ScanProfile {
             flags: flags.to_vec(),
             requires_root,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NmapConfig {
+    pub target: String,
+    pub profile: ScanProfile,
+    pub custom_ports: Option<String>,
+    pub skip_discovery: bool,
+    pub extra_args: Option<String>,
+    pub use_sudo: bool,
+}
+
+pub fn configure_nmap(target: &str, custom_ports: Option<&str>, skip_discovery: bool, extra_args: Option<&str>, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> NmapConfig {
+    let is_large_network = target.ends_with("/8");
+    
+    // Select Profile (Interactive)
+    let profile = if let Some(ports) = custom_ports {
+        io.println(&format!("{}", format!("[+] Custom Port Mode: Scanning ports '{}'", ports).cyan()));
+        ScanProfile::new(
+            "Custom Port Scan",
+            "User specified ports.",
+            &["-sV", "-T4"], // Base flags
+            false 
+        )
+    } else {
+        select_scan_profile(is_large_network, io)
+    };
+
+    let is_root = executor.is_root();
+    let mut use_sudo = false;
+
+    if profile.requires_root && !is_root {
+        io.print(&format!("\n{} {} [Y/n]: ", "[!]".red(), "This profile requires ROOT privileges. Attempt to elevate with sudo?".yellow().bold()));
+        io.flush();
+        let input = io.read_line();
+        
+        if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
+             use_sudo = true;
+        } 
+        // Note: Fallback logic moved to caller or handled by profile change?
+        // Actually, if user says NO, we should probably switch profile here.
+        else {
+             if custom_ports.is_none() {
+                 io.println(&format!("{}", "    - Switching to Connect Scan (-sT) automatically.".yellow()));
+                 return NmapConfig {
+                    target: target.to_string(),
+                    profile: ScanProfile::new(
+                        "Connect Scan (Fallback)",
+                        "Non-root fallback. Uses full TCP handshake.",
+                        &["-sT", "-sV", "--version-intensity", "5"],
+                        false
+                    ),
+                    custom_ports: custom_ports.map(|s| s.to_string()),
+                    skip_discovery,
+                    extra_args: extra_args.map(|s| s.to_string()),
+                    use_sudo: false,
+                 };
+             }
+        }
+    }
+
+    NmapConfig {
+        target: target.to_string(),
+        profile,
+        custom_ports: custom_ports.map(|s| s.to_string()),
+        skip_discovery,
+        extra_args: extra_args.map(|s| s.to_string()),
+        use_sudo,
     }
 }
 
@@ -97,95 +166,51 @@ fn select_scan_profile(is_large_network: bool, io: &dyn IoHandler) -> ScanProfil
     )
 }
 
-pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: bool, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    let is_root = executor.is_root();
-
+pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     if use_proxy {
         io.println(&format!("{}", "[*] Proxychains Enabled. Traffic will be routed through configured proxies.".magenta().bold()));
     }
 
-    if target.ends_with("/8") {
+    if config.target.ends_with("/8") {
         io.println(&format!("{}", "[!] Warning: Class A scan detected.".yellow()));
     }
 
-    // Select Profile
-    let is_large_network = target.ends_with("/8");
-    
-    let mut profile = if let Some(ports) = custom_ports {
-        io.println(&format!("{}", format!("[+] Custom Port Mode: Scanning ports '{}'", ports).cyan()));
-        ScanProfile::new(
-            "Custom Port Scan",
-            "User specified ports.",
-            &["-sV", "-T4"], // Base flags
-            false 
-        )
-    } else {
-        select_scan_profile(is_large_network, io)
-    };
-
     // Convert profile flags to Vec<String> so we can mutate them
-    let mut profile_flags: Vec<String> = profile.flags.iter().map(|s| s.to_string()).collect();
+    let mut profile_flags: Vec<String> = config.profile.flags.iter().map(|s| s.to_string()).collect();
 
     // Apply Custom Ports
-    if let Some(ports) = custom_ports {
+    if let Some(ports) = &config.custom_ports {
         profile_flags.push("-p".to_string());
         profile_flags.push(ports.to_string());
     }
 
     // Apply Skip Discovery (-Pn) to Deep Scan flags as well
-    if skip_discovery {
+    if config.skip_discovery {
         profile_flags.push("-Pn".to_string());
     }
 
     // Apply Extra Args to Deep Scan
-    if let Some(extras) = extra_args {
+    if let Some(extras) = &config.extra_args {
          for arg in extras.split_whitespace() {
              profile_flags.push(arg.to_string());
          }
     }
 
-    let mut use_sudo = false;
-
-    if profile.requires_root && !is_root {
-        io.print(&format!("\n{} {} [Y/n]: ", "[!]".red(), "This profile requires ROOT privileges. Attempt to elevate with sudo?".yellow().bold()));
-        io.flush();
-        let input = io.read_line();
-        
-        if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
-             use_sudo = true;
-             let status = executor.execute("sudo", &["-", "v"]);
-             if status.is_err() || !status.unwrap().success() {
-                 io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
-                 return;
-             }
-        } else {
-             if custom_ports.is_none() {
-                 io.println(&format!("{}", "    - Switching to Connect Scan (-sT) automatically.".yellow()));
-                 profile = ScanProfile::new(
-                    "Connect Scan (Fallback)",
-                    "Non-root fallback. Uses full TCP handshake.",
-                    &["-sT", "-sV", "--version-intensity", "5"],
-                    false
-                );
-                // Re-init flags from fallback profile
-                profile_flags = profile.flags.iter().map(|s| s.to_string()).collect();
-                if skip_discovery { profile_flags.push("-Pn".to_string()); }
-                if let Some(extras) = extra_args {
-                    for arg in extras.split_whitespace() {
-                        profile_flags.push(arg.to_string());
-                    }
-                }
-             }
-        }
+    if config.use_sudo {
+         let status = executor.execute("sudo", &["-", "v"]);
+         if status.is_err() || !status.unwrap().success() {
+             io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
+             return;
+         }
     }
     
-    io.println(&format!("{}", format!("\n[+] Selected Profile: {}", profile.name).green().bold()));
-    io.println(&format!("    {}", profile.description));
-    if let Some(e) = extra_args {
+    io.println(&format!("{}", format!("\n[+] Selected Profile: {}", config.profile.name).green().bold()));
+    io.println(&format!("    {}", config.profile.description));
+    if let Some(e) = &config.extra_args {
         io.println(&format!("    Extra Args: {}", e.cyan()));
     }
 
-    let safe_target = target.replace('/', "_");
+    let safe_target = config.target.replace('/', "_");
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let output_dir = format!("scans/nmap/{}/{}", safe_target, date);
 
@@ -194,11 +219,16 @@ pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: b
         return;
     }
 
-    io.println(&format!("{}", format!("[+] Starting Scan for {}", target).green()));
+    io.println(&format!("{}", format!("[+] Starting Scan for {}", config.target).green()));
     io.println(&format!("[+] Results will be saved to {}", output_dir));
 
     // Step 1: Host Discovery
     io.println(&format!("\n{}", "[1] Running Host Discovery...".blue().bold()));
+    // Note: We avoid ProgressBar in execute if it might run in background?
+    // Actually, background capture handles text fine, but progress bars might look messy in logs.
+    // Ideally, we conditionally use progress bar or just log.
+    // For now, let's keep it simple.
+    
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(ProgressStyle::default_spinner().template("{spinner:.green} {msg}").unwrap());
     spinner.set_message("Discovering hosts...");
@@ -209,17 +239,20 @@ pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: b
     let mut discovery_args = Vec::new();
     let mut has_discovery_override = false;
 
-    if let Some(extras) = extra_args {
+    if let Some(extras) = &config.extra_args {
          if extras.contains("-sn") || extras.contains("-P") {
              has_discovery_override = true;
          }
     }
     
-    if skip_discovery {
+    let is_large_network = config.target.ends_with("/8");
+    let is_root = executor.is_root();
+
+    if config.skip_discovery {
         discovery_args.push("-Pn");
     } else if !has_discovery_override {
         // Root users can use ICMP/ARP ping (-sn -PE etc). Non-root must rely on Connect/TCP ping.
-        if is_root || use_sudo {
+        if is_root || config.use_sudo {
             discovery_args.push("-sn");
             if is_large_network {
                 discovery_args.extend_from_slice(&[
@@ -235,13 +268,13 @@ pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: b
     }
     
     // Add extra args to discovery too, if they are relevant.
-    if let Some(extras) = extra_args {
+    if let Some(extras) = &config.extra_args {
          for arg in extras.split_whitespace() {
              discovery_args.push(arg);
          }
     }
 
-    discovery_args.push(target);
+    discovery_args.push(&config.target);
     discovery_args.push("-oN");
     discovery_args.push(&host_file);
 
@@ -253,7 +286,7 @@ pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: b
         final_cmd = "proxychains";
     }
 
-    if use_sudo {
+    if config.use_sudo {
         final_args.insert(0, final_cmd.to_string());
         final_cmd = "sudo";
     }
@@ -268,13 +301,13 @@ pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: b
         Ok(out) => {
             if !out.status.success() {
                 io.println(&format!("{}", "[!] Host discovery failed.".red()));
-                let _ = append_history(&HistoryEntry::new("Nmap", target, "Failed"));
+                let _ = append_history(&HistoryEntry::new("Nmap", &config.target, "Failed"));
                 return;
             }
         }
         Err(e) => {
             io.println(&format!("{} {}", "[!] Failed to execute nmap:".red(), e));
-            let _ = append_history(&HistoryEntry::new("Nmap", target, "Failed"));
+            let _ = append_history(&HistoryEntry::new("Nmap", &config.target, "Failed"));
             return;
         }
     }
@@ -288,7 +321,7 @@ pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: b
 
     if alive_hosts.is_empty() {
         io.println(&format!("{}", "[-] No alive hosts found.".yellow()));
-        let _ = append_history(&HistoryEntry::new("Nmap", target, "No Hosts"));
+        let _ = append_history(&HistoryEntry::new("Nmap", &config.target, "No Hosts"));
         return;
     }
 
@@ -322,7 +355,7 @@ pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: b
                     match host {
                         Some(h) => {
                             let scan_file = format!("{}/scan_{}", output_dir, h);
-                            let (final_cmd, final_args) = build_nmap_command("nmap", &scan_flags_str, &h, &scan_file, use_proxy, use_sudo);
+                            let (final_cmd, final_args) = build_nmap_command("nmap", &scan_flags_str, &h, &scan_file, use_proxy, config.use_sudo);
                             let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
                             let _ = executor.execute_silent(&final_cmd, &final_args_str);
@@ -337,7 +370,13 @@ pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: b
 
     bar.finish_with_message("All scans complete!");
     io.println(&format!("{}", format!("\n[+] Scan completed. Results in {}", output_dir).green()));
-    let _ = append_history(&HistoryEntry::new("Nmap", target, "Success"));
+    let _ = append_history(&HistoryEntry::new("Nmap", &config.target, "Success"));
+}
+
+// Deprecated wrapper for backward compatibility if needed, but we should update callers
+pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: bool, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+    let config = configure_nmap(target, custom_ports, skip_discovery, extra_args, executor, io);
+    execute_nmap_scan(config, use_proxy, executor, io);
 }
 
 pub fn build_nmap_command(

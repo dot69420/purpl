@@ -79,12 +79,14 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct CapturingIoHandler {
     pub output: Arc<Mutex<String>>,
+    pub passthrough: bool,
 }
 
 impl CapturingIoHandler {
-    pub fn new() -> Self {
+    pub fn new(passthrough: bool) -> Self {
         Self {
             output: Arc::new(Mutex::new(String::new())),
+            passthrough,
         }
     }
 
@@ -98,18 +100,31 @@ impl IoHandler for CapturingIoHandler {
         let mut out = self.output.lock().unwrap();
         out.push_str(msg);
         out.push('\n');
+        if self.passthrough {
+            println!("{}", msg);
+        }
     }
 
     fn print(&self, msg: &str) {
         let mut out = self.output.lock().unwrap();
         out.push_str(msg);
+        if self.passthrough {
+            print!("{}", msg);
+            let _ = io::stdout().flush();
+        }
     }
 
-    fn flush(&self) {}
+    fn flush(&self) {
+        if self.passthrough {
+            let _ = io::stdout().flush();
+        }
+    }
 
     fn read_line(&self) -> String {
-        // Background jobs usually don't support interactive input.
-        // Return empty or default.
+        // Background jobs don't support input.
+        // Even in foreground "Job" mode, if we use this handler, we typically execute non-interactive logic.
+        // If interactive input is needed in foreground job, we'd need to forward stdin.
+        // But for now, we assume Config/Exec split where Exec is non-interactive.
         String::new()
     }
 }
