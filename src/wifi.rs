@@ -33,21 +33,13 @@ pub struct WifiConfig {
 pub fn configure_wifi(interface: &str, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<WifiConfig> {
     let mut use_sudo = false;
     if !executor.is_root() {
-        io.print(&format!("\n{} {} [Y/n]: ", "[!]".red(), "WiFi Audit requires ROOT. Attempt to elevate with sudo?".yellow().bold()));
-        io.flush();
-        let input = io.read_line();
-        
-        if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
-             use_sudo = true;
-             let status = executor.execute("sudo", &["-v"]);
-            
-             if status.is_err() || !status.unwrap().success() {
-                 io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
-                 return None;
-             }
-        } else {
-             io.println(&format!("{}", "[-] Root required. Exiting.".red()));
-             return None;
+        match crate::ui::ask_and_enable_sudo(executor, io, Some("WiFi Audit")) {
+            Ok(true) => use_sudo = true,
+            Ok(false) => {
+                io.println(&format!("{}", "[-] Root required. Exiting.".red()));
+                return None;
+            },
+            Err(_) => return None,
         }
     }
 

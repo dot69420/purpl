@@ -57,40 +57,48 @@ pub fn configure_nmap(target: &str, custom_ports: Option<&str>, skip_discovery: 
     let is_root = executor.is_root();
     let mut use_sudo = false;
 
-        if profile.requires_root && !is_root {
-
-            let prompt_msg = format!("[!] {} This profile requires ROOT privileges. Attempt to elevate with sudo? ", "[!]".red());
-
-            let input = ui::get_input_styled(io, &prompt_msg);
-
-            
-
-            if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
-
-                 use_sudo = true;
-
+    if profile.requires_root && !is_root {
+        match ui::ask_and_enable_sudo(executor, io, Some("This profile")) {
+            Ok(true) => use_sudo = true,
+            Ok(false) => {
+                // User declined, fallback
+                if custom_ports.is_none() {
+                     io.println(&format!("{}", "    - Switching to Connect Scan (-sT) automatically.".yellow()));
+                     return NmapConfig {
+                        target: target.to_string(),
+                        profile: ScanProfile::new(
+                            "Connect Scan (Fallback)",
+                            "Non-root fallback. Uses full TCP handshake.",
+                            &["-sT", "-sV", "--version-intensity", "5"],
+                            false
+                        ),
+                        custom_ports: custom_ports.map(|s| s.to_string()),
+                        skip_discovery,
+                        extra_args: extra_args.map(|s| s.to_string()),
+                        use_sudo: false,
+                     };
+                 }
+            },
+            Err(_) => {
+                // Authentication failed, return fallback? Or better, just abort for clarity?
+                // Given Nmap context, falling back is user friendly.
+                if custom_ports.is_none() {
+                     io.println(&format!("{}", "    - Switching to Connect Scan (-sT) due to auth failure.".yellow()));
+                     return NmapConfig {
+                        target: target.to_string(),
+                        profile: ScanProfile::new(
+                            "Connect Scan (Fallback)",
+                            "Non-root fallback. Uses full TCP handshake.",
+                            &["-sT", "-sV", "--version-intensity", "5"],
+                            false
+                        ),
+                        custom_ports: custom_ports.map(|s| s.to_string()),
+                        skip_discovery,
+                        extra_args: extra_args.map(|s| s.to_string()),
+                        use_sudo: false,
+                     };
+                 }
             }
-
-     
-        // Note: Fallback logic moved to caller or handled by profile change?
-        // Actually, if user says NO, we should probably switch profile here.
-        else {
-             if custom_ports.is_none() {
-                 io.println(&format!("{}", "    - Switching to Connect Scan (-sT) automatically.".yellow()));
-                 return NmapConfig {
-                    target: target.to_string(),
-                    profile: ScanProfile::new(
-                        "Connect Scan (Fallback)",
-                        "Non-root fallback. Uses full TCP handshake.",
-                        &["-sT", "-sV", "--version-intensity", "5"],
-                        false
-                    ),
-                    custom_ports: custom_ports.map(|s| s.to_string()),
-                    skip_discovery,
-                    extra_args: extra_args.map(|s| s.to_string()),
-                    use_sudo: false,
-                 };
-             }
         }
     }
 
@@ -203,7 +211,7 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
     }
 
     if config.use_sudo {
-         match executor.execute_output("sudo", &["-", "v"]) {
+         match executor.execute_output("sudo", &["-v"]) {
              Ok(output) => {
                  if !output.status.success() {
                      io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));

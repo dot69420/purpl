@@ -116,20 +116,13 @@ pub fn configure_bluetooth(input_arg: &str, executor: &dyn CommandExecutor, io: 
     let mut use_sudo = false;
     if profile.name.contains("Stress") {
         if !executor.is_root() {
-             io.print(&format!("\n{} {} [Y/n]: ", "[!]".red(), "This profile requires ROOT. Attempt to elevate with sudo?".yellow().bold()));
-             io.flush();
-             let input = io.read_line();
-             
-             if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
-                 use_sudo = true;
-                 let status = executor.execute("sudo", &["-v"]);
-                 if status.is_err() || !status.unwrap().success() {
-                     io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
+             match crate::ui::ask_and_enable_sudo(executor, io, Some("This profile")) {
+                 Ok(true) => use_sudo = true,
+                 Ok(false) => {
+                     io.println(&format!("{}", "[-] Root required. Exiting.".red()));
                      return None;
-                 }
-             } else {
-                 io.println(&format!("{}", "[-] Root required. Exiting.".red()));
-                 return None;
+                 },
+                 Err(_) => return None,
              }
         }
     }

@@ -1,5 +1,6 @@
 use colored::*;
 use crate::io_handler::IoHandler;
+use crate::executor::CommandExecutor;
 use std::process::Command;
 
 pub fn clear_screen() {
@@ -7,13 +8,13 @@ pub fn clear_screen() {
 }
 
 pub fn print_main_menu_banner(io: &dyn IoHandler) {
-    io.println(&format!("{}", "    ██████╗ ██╗   ██╗██████╗ ██████╗ ██╗     ".magenta().bold()));
-    io.println(&format!("{}", "    ██╔══██╗██║   ██║██╔══██╗██╔══██╗██║     ".bright_black().bold()));
-    io.println(&format!("{}", "    ██████╔╝██║   ██║██████╔╝██████╔╝██║     ".magenta().bold()));
-    io.println(&format!("{}", "    ██╔═══╝ ██║   ██║██╔══██╗██╔═══╝ ██║     ".bright_black().bold()));
-    io.println(&format!("{}", "    ██║     ╚██████╔╝██║  ██║██║     ███████╗".magenta().bold()));
-    io.println(&format!("{}", "    ╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚══════╝".bright_black().bold()));
-    io.println(&format!("\n{}", "              Purple Team Helper Tool\n".magenta().bold()));
+    io.println(&format!("{}", "        ██████╗ ██╗   ██╗██████╗ ██████╗ ██╗     ".magenta().bold()));
+    io.println(&format!("{}", "        ██╔══██╗██║   ██║██╔══██╗██╔══██╗██║     ".bright_black().bold()));
+    io.println(&format!("{}", "        ██████╔╝██║   ██║██████╔╝██████╔╝██║     ".magenta().bold()));
+    io.println(&format!("{}", "        ██╔═══╝ ██║   ██║██╔══██╗██╔══██╗██║     ".bright_black().bold()));
+    io.println(&format!("{}", "        ██║     ╚██████╔╝██║  ██║██║     ███████╗".magenta().bold()));
+    io.println(&format!("{}", "        ╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚══════╝".bright_black().bold()));
+    io.println(&format!("\n{}", "                  Purple Team Helper Tool\n".magenta().bold()));
 }
 
 pub fn print_header(io: &dyn IoHandler, _title: &str, subtitle: Option<&str>) {
@@ -62,6 +63,7 @@ pub fn show_menu_loop<T>(
         clear_screen();
         if is_main_menu {
             print_main_menu_banner(io);
+            print_header(io, "PURPL CLI", Some("Main Menu"));
         } else {
             print_header(io, "PURPL CLI", Some(title));
         }
@@ -114,4 +116,37 @@ pub fn get_input_styled(io: &dyn IoHandler, prompt: &str) -> String {
     io.print(&format!("\n{} {}", prompt.cyan().bold(), ">> ".purple().bold().blink()));
     io.flush();
     io.read_line().trim().to_string()
+}
+
+pub fn ask_and_enable_sudo(executor: &dyn CommandExecutor, io: &dyn IoHandler, context_msg: Option<&str>) -> Result<bool, ()> {
+    let operation = context_msg.unwrap_or("This operation");
+    let prompt = format!("[!] {} requires ROOT privileges. Attempt to elevate with sudo?", operation);
+    
+    loop {
+        let input = get_input_styled(io, &format!("{} [Y/n]", prompt.red()));
+        let trimmed = input.trim();
+
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("y") || trimmed.eq_ignore_ascii_case("yes") {
+            // Interactive sudo authentication
+            let status = executor.execute("sudo", &["-v"]);
+            match status {
+                Ok(s) if s.success() => return Ok(true),
+                _ => {
+                    io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
+                    return Err(());
+                }
+            }
+        } else if trimmed.eq_ignore_ascii_case("n") || trimmed.eq_ignore_ascii_case("no") {
+            return Ok(false);
+        } else {
+            // Check if it starts with y but has extra content (likely a leaked password)
+            if trimmed.to_lowercase().starts_with('y') {
+                io.println(&format!("{}", "[!] Security Warning: Do not type your password on the confirmation line.".yellow().bold()));
+                io.println("    Please type 'y' to confirm, then enter your password securely when prompted by sudo.");
+                continue;
+            }
+            // Other invalid input, just loop or treat as no? strict loop is safer.
+            io.println(&format!("{}", "[!] Invalid input. Please enter 'y' or 'n'.".yellow()));
+        }
+    }
 }

@@ -7,6 +7,7 @@ use std::io::Cursor;
 
 pub trait CommandExecutor: Sync + Send {
     fn execute(&self, program: &str, args: &[&str]) -> io::Result<ExitStatus>;
+    fn execute_with_input(&self, program: &str, args: &[&str], input: &str) -> io::Result<ExitStatus>;
     fn execute_output(&self, program: &str, args: &[&str]) -> io::Result<Output>;
     fn execute_silent(&self, program: &str, args: &[&str]) -> io::Result<ExitStatus>;
     fn spawn_stdout(&self, program: &str, args: &[&str]) -> io::Result<Box<dyn BufRead + Send>>;
@@ -23,6 +24,22 @@ impl CommandExecutor for ShellExecutor {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status()
+    }
+
+    fn execute_with_input(&self, program: &str, args: &[&str], input: &str) -> io::Result<ExitStatus> {
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(input.as_bytes());
+        }
+
+        child.wait()
     }
 
     fn execute_output(&self, program: &str, args: &[&str]) -> io::Result<Output> {
@@ -156,6 +173,10 @@ impl CommandExecutor for MockExecutor {
         });
 
         Ok(self.get_behavior(program).status)
+    }
+
+    fn execute_with_input(&self, program: &str, args: &[&str], _input: &str) -> io::Result<ExitStatus> {
+        self.execute(program, args)
     }
 
     fn execute_output(&self, program: &str, args: &[&str]) -> io::Result<Output> {

@@ -32,20 +32,13 @@ pub struct PoisonConfig {
 pub fn configure_poisoning(interface_input: &str, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<PoisonConfig> {
     let mut use_sudo = false;
     if !executor.is_root() {
-        io.print("\n[!] LAN Poisoning requires ROOT privileges. Attempt to elevate with sudo? [Y/n]: ");
-        io.flush();
-        let input = io.read_line();
-        
-        if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
-             use_sudo = true;
-             let status = executor.execute("sudo", &["-v"]);
-             if status.is_err() || !status.unwrap().success() {
-                 io.println("[-] Sudo authentication failed. Aborting.");
-                 return None;
-             }
-        } else {
-             io.println("[-] Root required. Exiting.");
-             return None;
+        match crate::ui::ask_and_enable_sudo(executor, io, Some("LAN Poisoning")) {
+            Ok(true) => use_sudo = true,
+            Ok(false) => {
+                io.println("[-] Root required. Exiting.");
+                return None;
+            },
+            Err(_) => return None,
         }
     }
 

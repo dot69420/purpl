@@ -148,8 +148,8 @@ fn collect_items(job_manager: &Arc<JobManager>) -> Vec<DashboardItem> {
 }
 
 fn display_list(items: &[DashboardItem], io: &dyn IoHandler) {
-    let _ = std::process::Command::new("clear").status();
-    io.println(&format!("\n{}", "=== TASK & RESULT DASHBOARD ===".magenta().bold()));
+    crate::ui::clear_screen();
+    crate::ui::print_header(io, "PURPL CLI", Some("Task & Result Dashboard"));
     
     if items.is_empty() {
         io.println("\nNo jobs or history found.");
@@ -185,8 +185,9 @@ fn display_list(items: &[DashboardItem], io: &dyn IoHandler) {
 }
 
 fn view_item_details(item: &DashboardItem, job_manager: &Arc<JobManager>, io: &dyn IoHandler) {
-    let _ = std::process::Command::new("clear").status();
-    io.println(&format!("-- Details for {} --", item.id));
+    crate::ui::clear_screen();
+    crate::ui::print_header(io, "PURPL CLI", Some(&format!("Details for {}", item.id)));
+
     io.println(&format!("Tool: {}", item.tool_type));
     io.println(&format!("Target: {}", item.target));
     io.println(&format!("Time: {}", item.timestamp));

@@ -38,20 +38,13 @@ pub fn configure_sniffer(interface_input: &str, executor: &dyn CommandExecutor, 
     // 1. Check Root
     let mut use_sudo = false;
     if !executor.is_root() {
-        io.print(&format!("\n{} {} [Y/n]: ", "[!]".red(), "Packet sniffing requires ROOT privileges. Attempt to elevate with sudo?".yellow().bold()));
-        io.flush();
-        let input = io.read_line();
-        
-        if input.trim().eq_ignore_ascii_case("y") || input.trim().is_empty() {
-             use_sudo = true;
-             // Simple sudo check
-             if executor.execute("sudo", &["-v"]).is_err() {
-                 io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
-                 return None;
-             }
-        } else {
-             io.println(&format!("{}", "[-] Root required. Exiting.".red()));
-             return None;
+        match crate::ui::ask_and_enable_sudo(executor, io, Some("Packet sniffing")) {
+            Ok(true) => use_sudo = true,
+            Ok(false) => {
+                io.println(&format!("{}", "[-] Root required. Exiting.".red()));
+                return None;
+            },
+            Err(_) => return None,
         }
     }
 
