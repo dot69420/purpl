@@ -530,34 +530,40 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecut
         let choice_str = io.read_line();
         if choice_str.is_empty() { break; } 
         
-        if let Ok(choice_idx) = choice_str.trim().parse::<usize>() {
-            if choice_idx > 0 && choice_idx <= main_menu.len() {
-                // ... (Existing tool execution logic) ...
-                let tool = &main_menu[choice_idx - 1];
-                let mut arg = String::new();
-                
-                if tool.needs_arg {
-                    io.print(&format!("{}", tool.arg_prompt));
-                    io.flush();
-                    let input = io.read_line();
-                    arg = input.trim().to_string();
-                    if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
-                         continue;
+        match choice_str.trim().parse::<usize>() {
+            Ok(choice_idx) => {
+                if choice_idx > 0 && choice_idx <= main_menu.len() {
+                    // ... (Existing tool execution logic) ...
+                    let tool = &main_menu[choice_idx - 1];
+                    let mut arg = String::new();
+                    
+                    if tool.needs_arg {
+                        io.print(&format!("{}", tool.arg_prompt));
+                        io.flush();
+                        let input = io.read_line();
+                        arg = input.trim().to_string();
+                        if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
+                             continue;
+                        }
                     }
+                    
+                    if let Some(func) = tool.function {
+                        func(&arg, None, use_proxy, executor.clone(), io, Some(job_manager.clone()));
+                    }
+                } else if choice_idx == main_menu.len() + 1 {
+                    dashboard::show_dashboard(&job_manager, io);
+                } else if choice_idx == main_menu.len() + 2 {
+                    use_proxy = !use_proxy;
+                } else if choice_idx == main_menu.len() + 3 {
+                    io.println("\nExiting. Stay safe!");
+                    break;
+                } else {
+                    io.println(&format!("{}", "[!] Invalid choice.".red()));
+                    std::thread::sleep(std::time::Duration::from_secs(1));
                 }
-                
-                if let Some(func) = tool.function {
-                    func(&arg, None, use_proxy, executor.clone(), io, Some(job_manager.clone()));
-                }
-            } else if choice_idx == main_menu.len() + 1 {
-                dashboard::show_dashboard(&job_manager, io);
-            } else if choice_idx == main_menu.len() + 2 {
-                use_proxy = !use_proxy;
-            } else if choice_idx == main_menu.len() + 3 {
-                io.println("\nExiting. Stay safe!");
-                break;
-            } else {
-                io.println(&format!("{}", "[!] Invalid choice.".red()));
+            },
+            Err(_) => {
+                io.println(&format!("{}", "[!] Invalid input. Please enter a number.".red()));
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
         }
@@ -611,26 +617,36 @@ fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: Arc<dy
         io.flush();
 
         let choice_str = io.read_line();
-        let choice_idx = choice_str.trim().parse::<usize>().unwrap_or(99);
+        
+        match choice_str.trim().parse::<usize>() {
+            Ok(choice_idx) => {
+                if choice_idx == 0 { break; }
 
-        if choice_idx == 0 { break; }
+                if choice_idx > 0 && choice_idx <= tools.len() {
+                    let tool = &tools[choice_idx - 1];
+                    let mut arg = String::new();
 
-        if choice_idx > 0 && choice_idx <= tools.len() {
-            let tool = &tools[choice_idx - 1];
-            let mut arg = String::new();
+                    if tool.needs_arg {
+                        io.print(&format!("{}", tool.arg_prompt));
+                        io.flush();
+                        let input = io.read_line();
+                        arg = input.trim().to_string();
+                        if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
+                             continue;
+                        }
+                    }
 
-            if tool.needs_arg {
-                io.print(&format!("{}", tool.arg_prompt));
-                io.flush();
-                let input = io.read_line();
-                arg = input.trim().to_string();
-                if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
-                     continue;
+                    if let Some(func) = tool.function {
+                        func(&arg, None, use_proxy, executor.clone(), io, job_manager.clone());
+                    }
+                } else {
+                    io.println(&format!("{}", "[!] Invalid selection.".red()));
+                    std::thread::sleep(std::time::Duration::from_secs(1));
                 }
-            }
-
-            if let Some(func) = tool.function {
-                func(&arg, None, use_proxy, executor.clone(), io, job_manager.clone());
+            },
+            Err(_) => {
+                io.println(&format!("{}", "[!] Invalid input. Please enter a number.".red()));
+                std::thread::sleep(std::time::Duration::from_secs(1));
             }
         }
     }
