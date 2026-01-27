@@ -197,10 +197,21 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
     }
 
     if config.use_sudo {
-         let status = executor.execute("sudo", &["-", "v"]);
-         if status.is_err() || !status.unwrap().success() {
-             io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
-             return;
+         match executor.execute_output("sudo", &["-", "v"]) {
+             Ok(output) => {
+                 if !output.status.success() {
+                     io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
+                     let stderr_str = String::from_utf8_lossy(&output.stderr);
+                     if !stderr_str.trim().is_empty() {
+                         io.println(&format!("{}", format!("    Error: {}", stderr_str.trim()).red()));
+                     }
+                     return;
+                 }
+             },
+             Err(e) => {
+                 io.println(&format!("{} {}", "[!] Failed to execute sudo for authentication check:".red(), e));
+                 return;
+             }
          }
     }
     
