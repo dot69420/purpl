@@ -191,314 +191,128 @@ pub fn run_legacy_script(script: &str, arg: &str, use_sudo: bool, executor: &dyn
     let _ = io.read_line();
 }
 
-fn nmap_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
-    // 1. Configure
-    let config = nmap::configure_nmap(target, None, false, extra_args, &*executor, io);
-    
-    // 2. Ask for Background (if job_manager available)
-    let mut run_bg = false;
-    if let Some(_) = &job_manager {
-        io.print("\nRun scan in background? (y/N): ");
-        io.flush();
-        let input = io.read_line();
-        if input.trim().eq_ignore_ascii_case("y") {
-            run_bg = true;
-        }
-    }
-
-    // 3. Create Job
-    if let Some(jm) = job_manager {
-        let config = config.clone();
-        let executor_clone = executor.clone();
-        let proxy = use_proxy;
-        let name = format!("Nmap {}", config.target);
-        
-        let job = jm.spawn_job(&name, move |ex, io| {
-            nmap::execute_nmap_scan(config, proxy, &*ex, io);
-        }, executor_clone, run_bg);
-
-        if !run_bg {
-            // Foreground: Wait for job
-            // Note: Since passthrough=true, output is already streaming to console via CapturingIoHandler
-            while job.is_running() {
-                thread::sleep(Duration::from_millis(100));
+/// Generic wrapper to handle tool execution workflow:
+/// 1. Check Config
+/// 2. Prompt for Background
+/// 3. Execute (FG or BG)
+fn run_tool_workflow<C, F, N>(
+    config_opt: Option<C>,
+    use_proxy: bool,
+    executor: Arc<dyn CommandExecutor + Send + Sync>,
+    io: &dyn IoHandler,
+    job_manager: Option<Arc<JobManager>>,
+    execute_fn: F,
+    name_fn: N,
+) 
+where
+    C: Clone + Send + Sync + 'static,
+    F: Fn(C, bool, Arc<dyn CommandExecutor + Send + Sync>, &dyn IoHandler) + Send + Sync + 'static,
+    N: Fn(&C) -> String,
+{
+    if let Some(config) = config_opt {
+        let mut run_bg = false;
+        if let Some(_) = &job_manager {
+            io.print("\nRun task in background? (y/N): ");
+            io.flush();
+            let input = io.read_line();
+            if input.trim().eq_ignore_ascii_case("y") {
+                run_bg = true;
             }
-            io.println("\nScan complete.");
-            io.print("Press Enter to return to menu...");
+        }
+
+        if run_bg {
+            if let Some(jm) = job_manager {
+                let config_clone = config.clone();
+                let proxy = use_proxy;
+                let name = name_fn(&config);
+                let exec_arc = Arc::new(execute_fn); 
+                
+                let _job = jm.spawn_job(&name, move |ex, io| {
+                    exec_arc(config_clone, proxy, ex, io);
+                }, executor, run_bg);
+                
+                io.println(&format!("{}", "Job started in background.".green()));
+                thread::sleep(Duration::from_secs(1));
+            }
+        } else {
+            execute_fn(config, use_proxy, executor, io);
+            io.print("\nPress Enter to return to menu...");
             io.flush();
             let _ = io.read_line();
-        } else {
-            io.println(&format!("{}", "Job started in background.".green()));
-            thread::sleep(Duration::from_secs(1));
         }
-    } else {
-        // Fallback (e.g. CLI non-interactive mode without job manager)
-        nmap::execute_nmap_scan(config, use_proxy, &*executor, io);
     }
+}
+
+fn nmap_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
+    let config = nmap::configure_nmap(target, None, false, extra_args, &*executor, io);
+    run_tool_workflow(Some(config), use_proxy, executor, io, job_manager, 
+        |cfg, p, ex, i| nmap::execute_nmap_scan(cfg, p, &*ex, i),
+        |cfg| format!("Nmap {}", cfg.target)
+    );
 }
 
 fn web_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
-    if let Some(config) = web::configure_web_enum(target, extra_args, &*executor, io) {
-        let mut run_bg = false;
-        if let Some(_) = &job_manager {
-            io.print("\nRun scan in background? (y/N): ");
-            io.flush();
-            let input = io.read_line();
-            if input.trim().eq_ignore_ascii_case("y") {
-                run_bg = true;
-            }
-        }
-
-        if run_bg {
-            if let Some(jm) = job_manager {
-                let config = config.clone();
-                let executor = executor.clone();
-                let proxy = use_proxy;
-                let name = format!("WebEnum {}", config.target);
-                
-                jm.spawn_job(&name, move |ex, io| {
-                    web::execute_web_enum(config, proxy, &*ex, io);
-                }, executor, run_bg);
-                io.println(&format!("{}", "Job started in background.".green()));
-            }
-        } else {
-            web::execute_web_enum(config, use_proxy, &*executor, io);
-            io.print("\nPress Enter to return to menu...");
-            io.flush();
-            let _ = io.read_line();
-        }
-    }
+    let config = web::configure_web_enum(target, extra_args, &*executor, io);
+    run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+        |cfg, p, ex, i| web::execute_web_enum(cfg, p, &*ex, i),
+        |cfg| format!("WebEnum {}", cfg.target)
+    );
 }
 
 fn fuzzer_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
-    if let Some(config) = fuzzer::configure_fuzzer(target, None, extra_args, &*executor, io) {
-        let mut run_bg = false;
-        if let Some(_) = &job_manager {
-            io.print("\nRun fuzzing in background? (y/N): ");
-            io.flush();
-            let input = io.read_line();
-            if input.trim().eq_ignore_ascii_case("y") {
-                run_bg = true;
-            }
-        }
-
-        if run_bg {
-            if let Some(jm) = job_manager {
-                let config = config.clone();
-                let executor = executor.clone();
-                let proxy = use_proxy;
-                let name = format!("Fuzzer {}", config.target);
-                
-                jm.spawn_job(&name, move |ex, io| {
-                    fuzzer::execute_fuzzer(config, proxy, &*ex, io);
-                }, executor, run_bg);
-                io.println(&format!("{}", "Job started in background.".green()));
-            }
-        } else {
-            fuzzer::execute_fuzzer(config, use_proxy, &*executor, io);
-            io.print("\nPress Enter to return to menu...");
-            io.flush();
-            let _ = io.read_line();
-        }
-    }
+    let config = fuzzer::configure_fuzzer(target, None, extra_args, &*executor, io);
+    run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+        |cfg, p, ex, i| fuzzer::execute_fuzzer(cfg, p, &*ex, i),
+        |cfg| format!("Fuzzer {}", cfg.target)
+    );
 }
 
 fn exploit_search_wrapper(target: &str, _extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
-    if let Some(config) = search_exploit::configure_searchsploit(target, &*executor, io) {
-        let mut run_bg = false;
-        if let Some(_) = &job_manager {
-            io.print("\nRun search in background? (y/N): ");
-            io.flush();
-            let input = io.read_line();
-            if input.trim().eq_ignore_ascii_case("y") {
-                run_bg = true;
-            }
-        }
-
-        if run_bg {
-            if let Some(jm) = job_manager {
-                let config = config.clone();
-                let executor = executor.clone();
-                let proxy = use_proxy;
-                let name = format!("SearchSploit {}", config.query);
-                
-                jm.spawn_job(&name, move |ex, io| {
-                    search_exploit::execute_searchsploit(config, proxy, &*ex, io);
-                }, executor, run_bg);
-                io.println(&format!("{}", "Job started in background.".green()));
-            }
-        } else {
-            search_exploit::execute_searchsploit(config, use_proxy, &*executor, io);
-            io.print("\nPress Enter to return to menu...");
-            io.flush();
-            let _ = io.read_line();
-        }
-    }
+    let config = search_exploit::configure_searchsploit(target, &*executor, io);
+    run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+        |cfg, p, ex, i| search_exploit::execute_searchsploit(cfg, p, &*ex, i),
+        |cfg| format!("SearchSploit {}", cfg.query)
+    );
 }
 
 fn exploit_active_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
-    if let Some(config) = exploit::configure_exploitation(target, None, extra_args, &*executor, io) {
-        let mut run_bg = false;
-        if let Some(_) = &job_manager {
-            io.print("\nRun exploitation in background? (y/N): ");
-            io.flush();
-            let input = io.read_line();
-            if input.trim().eq_ignore_ascii_case("y") {
-                run_bg = true;
-            }
-        }
-
-        if run_bg {
-            if let Some(jm) = job_manager {
-                let config = config.clone();
-                let executor = executor.clone();
-                let proxy = use_proxy;
-                let name = "Exploitation Job"; 
-                
-                jm.spawn_job(name, move |ex, io| {
-                    exploit::execute_exploitation(config, proxy, &*ex, io);
-                }, executor, run_bg);
-                io.println(&format!("{}", "Job started in background.".green()));
-            }
-        } else {
-            exploit::execute_exploitation(config, use_proxy, &*executor, io);
-            io.print("\nPress Enter to return to menu...");
-            io.flush();
-            let _ = io.read_line();
-        }
-    }
+    let config = exploit::configure_exploitation(target, None, extra_args, &*executor, io);
+    run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+        |cfg, p, ex, i| exploit::execute_exploitation(cfg, p, &*ex, i),
+        |_cfg| "Exploitation Job".to_string()
+    );
 }
 
 fn poison_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
-    if let Some(config) = poison::configure_poisoning(interface, &*executor, io) {
-        let mut run_bg = false;
-        if let Some(_) = &job_manager {
-            io.print("\nRun poisoning in background? (y/N): ");
-            io.flush();
-            let input = io.read_line();
-            if input.trim().eq_ignore_ascii_case("y") {
-                run_bg = true;
-            }
-        }
-
-        if run_bg {
-            if let Some(jm) = job_manager {
-                let config = config.clone();
-                let executor = executor.clone();
-                let proxy = use_proxy;
-                let name = format!("Poisoning {}", config.interface);
-                
-                jm.spawn_job(&name, move |ex, io| {
-                    poison::execute_poisoning(config, proxy, &*ex, io);
-                }, executor, run_bg);
-                io.println(&format!("{}", "Job started in background.".green()));
-            }
-        } else {
-            poison::execute_poisoning(config, use_proxy, &*executor, io);
-            io.print("\nPress Enter to return to menu...");
-            io.flush();
-            let _ = io.read_line();
-        }
-    }
+    let config = poison::configure_poisoning(interface, &*executor, io);
+    run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+        |cfg, p, ex, i| poison::execute_poisoning(cfg, p, &*ex, i),
+        |cfg| format!("Poisoning {}", cfg.interface)
+    );
 }
 
 fn wifi_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
-    if let Some(config) = wifi::configure_wifi(interface, &*executor, io) {
-        let mut run_bg = false;
-        if let Some(_) = &job_manager {
-            io.print("\nRun WiFi audit in background? (y/N): ");
-            io.flush();
-            let input = io.read_line();
-            if input.trim().eq_ignore_ascii_case("y") {
-                run_bg = true;
-            }
-        }
-
-        if run_bg {
-            if let Some(jm) = job_manager {
-                let config = config.clone();
-                let executor = executor.clone();
-                let proxy = use_proxy;
-                let name = format!("WifiAudit {}", config.interface);
-                
-                jm.spawn_job(&name, move |ex, io| {
-                    wifi::execute_wifi_audit(config, proxy, &*ex, io);
-                }, executor, run_bg);
-                io.println(&format!("{}", "Job started in background.".green()));
-            }
-        } else {
-            wifi::execute_wifi_audit(config, use_proxy, &*executor, io);
-            io.print("\nPress Enter to return to menu...");
-            io.flush();
-            let _ = io.read_line();
-        }
-    }
+    let config = wifi::configure_wifi(interface, &*executor, io);
+    run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+        |cfg, p, ex, i| wifi::execute_wifi_audit(cfg, p, &*ex, i),
+        |cfg| format!("WifiAudit {}", cfg.interface)
+    );
 }
 
 fn bluetooth_wrapper(arg: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
-    if let Some(config) = bluetooth::configure_bluetooth(arg, &*executor, io) {
-        let mut run_bg = false;
-        if let Some(_) = &job_manager {
-            io.print("\nRun bluetooth attack in background? (y/N): ");
-            io.flush();
-            let input = io.read_line();
-            if input.trim().eq_ignore_ascii_case("y") {
-                run_bg = true;
-            }
-        }
-
-        if run_bg {
-            if let Some(jm) = job_manager {
-                let config = config.clone();
-                let executor = executor.clone();
-                let proxy = use_proxy;
-                let name = format!("Bluetooth {}", config.profile.name);
-                
-                jm.spawn_job(&name, move |ex, io| {
-                    bluetooth::execute_bluetooth(config, proxy, &*ex, io);
-                }, executor, run_bg);
-                io.println(&format!("{}", "Job started in background.".green()));
-            }
-        } else {
-            bluetooth::execute_bluetooth(config, use_proxy, &*executor, io);
-            io.print("\nPress Enter to return to menu...");
-            io.flush();
-            let _ = io.read_line();
-        }
-    }
+    let config = bluetooth::configure_bluetooth(arg, &*executor, io);
+    run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+        |cfg, p, ex, i| bluetooth::execute_bluetooth(cfg, p, &*ex, i),
+        |cfg| format!("Bluetooth {}", cfg.profile.name)
+    );
 }
 
 fn sniffer_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
-    if let Some(config) = sniffer::configure_sniffer(interface, &*executor, io) {
-        let mut run_bg = false;
-        if let Some(_) = &job_manager {
-            io.print("\nRun sniffer in background? (y/N): ");
-            io.flush();
-            let input = io.read_line();
-            if input.trim().eq_ignore_ascii_case("y") {
-                run_bg = true;
-            }
-        }
-
-        if run_bg {
-            if let Some(jm) = job_manager {
-                let config = config.clone();
-                let executor = executor.clone();
-                let proxy = use_proxy;
-                let name = format!("Sniffer {}", config.interface);
-                
-                jm.spawn_job(&name, move |ex, io| {
-                    sniffer::execute_sniffer(config, proxy, &*ex, io);
-                }, executor, run_bg);
-                io.println(&format!("{}", "Job started in background.".green()));
-            }
-        } else {
-            sniffer::execute_sniffer(config, use_proxy, &*executor, io);
-            io.print("\nPress Enter to return to menu...");
-            io.flush();
-            let _ = io.read_line();
-        }
-    }
+    let config = sniffer::configure_sniffer(interface, &*executor, io);
+    run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+        |cfg, p, ex, i| sniffer::execute_sniffer(cfg, p, &*ex, i),
+        |cfg| format!("Sniffer {}", cfg.interface)
+    );
 }
 
 
@@ -723,5 +537,3 @@ fn main() {
 }
 
 // ... Wrappers ...
-
-
