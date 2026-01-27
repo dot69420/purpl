@@ -89,8 +89,8 @@ mod tests {
         let executor = Arc::new(MockExecutor::new());
         let io = MockIoHandler::new();
         let job_manager = Arc::new(JobManager::new());
-        // Exit is now option 10 (5 tools + 5 options)
-        io.add_input("10\n");
+        // Exit is now option 8 (5 tools + 3 options)
+        io.add_input("8\n");
 
         run_interactive_mode(false, executor.clone(), &io, job_manager);
 
@@ -110,18 +110,18 @@ mod tests {
         // Tool 1 needs arg: "Enter target IP: "
         io.add_input("127.0.0.1\n");
 
-        // Background prompt: N
-        io.add_input("n\n");
-
         // Then inside tool logic:
         // Nmap tool uses run_nmap_scan.
         // It asks for Profile (Input 2)
         io.add_input("2\n");
 
+        // Background prompt: N
+        io.add_input("n\n");
+
         // After tool runs, menu asks "Press Enter to return to menu..."
         io.add_input("\n");
 
-        io.add_input("10\n"); // Exit (Option 10)
+        io.add_input("8\n"); // Exit (Option 8)
 
         // Mock nmap host discovery output using new registry
         executor.register_output("nmap", b"Nmap scan report for 127.0.0.1");
@@ -161,24 +161,24 @@ mod tests {
         io.add_input("2\n"); // Enter Web Submenu
         io.add_input("1\n"); // Select Gobuster
         io.add_input("http://10.0.0.1\n"); // Target
-        io.add_input("n\n"); // Background: No
         io.add_input("3\n"); // Profile: Manual
         io.add_input("wordlists/test.txt\n"); // Wordlist
-        io.add_input("\n"); // Return to submenu
+        io.add_input("n\n"); // Background: No
+        io.add_input("\n"); // Press Enter to return
         io.add_input("0\n"); // Back to Main Menu
 
         // 3. Network Ops (Option 4) -> Sniffer (Option 1)
         io.add_input("4\n"); // Enter NetOps Submenu
         io.add_input("1\n"); // Select Sniffer
-        io.add_input("n\n"); // Background: No (Asked first in show_submenu)
         io.add_input("1\n"); // Interface Selection (1: eth0)
         io.add_input("4\n"); // Profile: ICMP
         io.add_input("1\n"); // Mode: Passive
-        io.add_input("\n"); // Return to submenu
+        io.add_input("n\n"); // Background: No
+        io.add_input("\n"); // Press Enter to return
         io.add_input("0\n"); // Back to Main Menu
 
-        // 4. Exit (Option 10)
-        io.add_input("10\n");
+        // 4. Exit (Option 8)
+        io.add_input("8\n");
 
         // --- Run ---
         run_interactive_mode(false, executor.clone(), &io, job_manager);

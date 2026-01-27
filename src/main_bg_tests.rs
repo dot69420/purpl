@@ -22,10 +22,10 @@ fn test_interactive_mode_background_job() {
     io.add_input("127.0.0.1\n"); // Target
     io.add_input("1\n"); // Profile: 1 (Stealth) - Consumed by configure_nmap
     io.add_input("y\n"); // Run in background: Yes - Consumed by nmap_wrapper
-    // nmap_wrapper spawns job and returns.
-    // Menu asks "Press Enter to return..."
-    io.add_input("\n"); 
-    io.add_input("10\n"); // Exit
+    // nmap_wrapper spawns job and returns immediately (with sleep).
+    // No "Press Enter" prompt for BG jobs.
+    
+    io.add_input("8\n"); // Exit
 
     // Register success for Nmap so the background job doesn't fail immediately if it runs fast
     executor.register_success("nmap");

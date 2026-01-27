@@ -14,9 +14,9 @@ pub mod executor;
 pub mod io_handler;
 pub mod job_manager;
 pub mod dashboard;
+pub mod ui;
 
 use clap::{Parser, Subcommand};
-use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 use std::thread;
@@ -155,19 +155,6 @@ impl Tool {
 #[path = "main_tests.rs"]
 mod tests;
 
-fn clear_screen() {
-    let _ = Command::new("clear").status();
-}
-
-pub fn print_banner(io: &dyn IoHandler) {
-    io.println(&format!("{}", "    ██████╗ ██╗   ██╗██████╗ ██████╗ ██╗     ".magenta().bold()));
-    io.println(&format!("{}", "    ██╔══██╗██║   ██║██╔══██╗██╔══██╗██║     ".bright_black().bold()));
-    io.println(&format!("{}", "    ██████╔╝██║   ██║██████╔╝██████╔╝██║     ".magenta().bold()));
-    io.println(&format!("{}", "    ██╔═══╝ ██║   ██║██╔══██╗██╔═══╝ ██║     ".bright_black().bold()));
-    io.println(&format!("{}", "    ██║     ╚██████╔╝██║  ██║██║     ███████╗".magenta().bold()));
-    io.println(&format!("{}", "    ╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚══════╝".bright_black().bold()));
-    io.println(&format!("\n{}", "              PURPL Control Center | Rust Edition v2.2\n".magenta().bold()));
-}
 
 pub fn run_legacy_script(script: &str, arg: &str, use_sudo: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     let script_path = format!("./{}", script);
@@ -316,6 +303,23 @@ fn sniffer_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, execu
 }
 
 
+fn execute_tool(tool: &Tool, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
+    let mut arg = String::new();
+    if tool.needs_arg {
+        io.print(&format!("\n{}", tool.arg_prompt));
+        io.flush();
+        let input = io.read_line();
+        arg = input.trim().to_string();
+        if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
+             return;
+        }
+    }
+    
+    if let Some(func) = tool.function {
+        func(&arg, None, use_proxy, executor, io, job_manager);
+    }
+}
+
 pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Arc<JobManager>) {
     let main_menu = vec![
         Tool::new("Network Recon (Nmap)", "nmap_automator.sh", true, "Enter target IP: ", true, Some(nmap_wrapper)),
@@ -326,59 +330,37 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecut
     ];
 
     loop {
-        clear_screen();
-        print_banner(io);
-        let proxy_status = if use_proxy { "ON".magenta().bold() } else { "OFF".dimmed() };
-        io.println(&format!("              Proxychains: [{}]\n", proxy_status));
+        let menu_items: Vec<ui::MenuItem<&Tool>> = main_menu.iter()
+            .map(|t| ui::MenuItem::new(&t.name, t))
+            .collect();
 
-        for (i, tool) in main_menu.iter().enumerate() {
-            io.println(&format!("[{}] {}", i + 1, tool.name));
-        }
-        io.println(&format!("[{}] Dashboard (Results & History)", main_menu.len() + 1));
-        io.println(&format!("[{}] Toggle Proxychains", main_menu.len() + 2));
-        io.println(&format!("[{}] Exit", main_menu.len() + 3));
+        let proxy_status = if use_proxy { "ON".green() } else { "OFF".red() };
+        let proxy_label = format!("Toggle Proxychains [{}]", proxy_status);
         
-        io.print(&format!("\n{}", "Select an option: ".green()));
-        io.flush();
+        let extras = vec![
+            ("Dashboard (Results & History)", "D"),
+            (proxy_label.as_str(), "P"),
+            ("Exit", "0"),
+        ];
 
-        let choice_str = io.read_line();
-        if choice_str.is_empty() { break; } 
-        
-        match choice_str.trim().parse::<usize>() {
-            Ok(choice_idx) => {
-                if choice_idx > 0 && choice_idx <= main_menu.len() {
-                    // ... (Existing tool execution logic) ...
-                    let tool = &main_menu[choice_idx - 1];
-                    let mut arg = String::new();
-                    
-                    if tool.needs_arg {
-                        io.print(&format!("{}", tool.arg_prompt));
-                        io.flush();
-                        let input = io.read_line();
-                        arg = input.trim().to_string();
-                        if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
-                             continue;
-                        }
-                    }
-                    
-                    if let Some(func) = tool.function {
-                        func(&arg, None, use_proxy, executor.clone(), io, Some(job_manager.clone()));
-                    }
-                } else if choice_idx == main_menu.len() + 1 {
-                    dashboard::show_dashboard(&job_manager, io);
-                } else if choice_idx == main_menu.len() + 2 {
-                    use_proxy = !use_proxy;
-                } else if choice_idx == main_menu.len() + 3 {
-                    io.println("\nExiting. Stay safe!");
-                    break;
-                } else {
-                    io.println(&format!("{}", "[!] Invalid choice.".red()));
-                    std::thread::sleep(std::time::Duration::from_secs(1));
+        match ui::show_menu_loop(io, "Main Menu", &menu_items, &extras) {
+            ui::MenuResult::Item(idx) => {
+                let tool = &main_menu[idx];
+                execute_tool(tool, use_proxy, executor.clone(), io, Some(job_manager.clone()));
+            },
+            ui::MenuResult::Extra(key) => {
+                match key.as_str() {
+                    "D" => dashboard::show_dashboard(&job_manager, io),
+                    "P" => use_proxy = !use_proxy,
+                    "0" => {
+                        io.println("\nExiting. Stay safe!");
+                        break;
+                    },
+                    _ => {}
                 }
             },
-            Err(_) => {
-                io.println(&format!("{}", "[!] Invalid input. Please enter a number.".red()));
-                std::thread::sleep(std::time::Duration::from_secs(1));
+            ui::MenuResult::Back => {
+                // EOF or empty input on main menu
             }
         }
     }
@@ -420,52 +402,28 @@ fn wireless_category(_arg: &str, _extra: Option<&str>, use_proxy: bool, executor
 
 fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>) {
     loop {
-        clear_screen();
-        io.println(&format!("\n--- {} ---", title.cyan().bold()));
-        for (i, tool) in tools.iter().enumerate() {
-            io.println(&format!("[{}] {}", i + 1, tool.name));
-        }
-        io.println("[0] Back to Main Menu");
+        let menu_items: Vec<ui::MenuItem<&Tool>> = tools.iter()
+            .map(|t| ui::MenuItem::new(&t.name, t))
+            .collect();
+            
+        let extras = vec![
+            ("Back to Main Menu", "0"),
+        ];
 
-        io.print(&format!("\n{}", "Select an option: ".green()));
-        io.flush();
-
-        let choice_str = io.read_line();
-        
-        match choice_str.trim().parse::<usize>() {
-            Ok(choice_idx) => {
-                if choice_idx == 0 { break; }
-
-                if choice_idx > 0 && choice_idx <= tools.len() {
-                    let tool = &tools[choice_idx - 1];
-                    let mut arg = String::new();
-
-                    if tool.needs_arg {
-                        io.print(&format!("{}", tool.arg_prompt));
-                        io.flush();
-                        let input = io.read_line();
-                        arg = input.trim().to_string();
-                        if arg.is_empty() && !tool.arg_prompt.contains("Optional") && !tool.arg_prompt.contains("Leave empty") {
-                             continue;
-                        }
-                    }
-
-                    if let Some(func) = tool.function {
-                        func(&arg, None, use_proxy, executor.clone(), io, job_manager.clone());
-                    }
-                } else {
-                    io.println(&format!("{}", "[!] Invalid selection.".red()));
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                }
+        match ui::show_menu_loop(io, title, &menu_items, &extras) {
+            ui::MenuResult::Item(idx) => {
+                let tool = &tools[idx];
+                execute_tool(tool, use_proxy, executor.clone(), io, job_manager.clone());
             },
-            Err(_) => {
-                io.println(&format!("{}", "[!] Invalid input. Please enter a number.".red()));
-                std::thread::sleep(std::time::Duration::from_secs(1));
+            ui::MenuResult::Extra(key) => {
+                 if key == "0" { break; }
+            },
+            ui::MenuResult::Back => {
+                break;
             }
         }
     }
 }
-
 
 fn main() {
     let _ = ctrlc::set_handler(move || {
