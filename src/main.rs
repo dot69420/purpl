@@ -263,6 +263,9 @@ fn web_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, executor
             }
         } else {
             web::execute_web_enum(config, use_proxy, &*executor, io);
+            io.print("\nPress Enter to return to menu...");
+            io.flush();
+            let _ = io.read_line();
         }
     }
 }
@@ -293,6 +296,9 @@ fn fuzzer_wrapper(target: &str, extra_args: Option<&str>, use_proxy: bool, execu
             }
         } else {
             fuzzer::execute_fuzzer(config, use_proxy, &*executor, io);
+            io.print("\nPress Enter to return to menu...");
+            io.flush();
+            let _ = io.read_line();
         }
     }
 }
@@ -323,6 +329,9 @@ fn exploit_search_wrapper(target: &str, _extra_args: Option<&str>, use_proxy: bo
             }
         } else {
             search_exploit::execute_searchsploit(config, use_proxy, &*executor, io);
+            io.print("\nPress Enter to return to menu...");
+            io.flush();
+            let _ = io.read_line();
         }
     }
 }
@@ -353,6 +362,9 @@ fn exploit_active_wrapper(target: &str, extra_args: Option<&str>, use_proxy: boo
             }
         } else {
             exploit::execute_exploitation(config, use_proxy, &*executor, io);
+            io.print("\nPress Enter to return to menu...");
+            io.flush();
+            let _ = io.read_line();
         }
     }
 }
@@ -383,6 +395,9 @@ fn poison_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, execut
             }
         } else {
             poison::execute_poisoning(config, use_proxy, &*executor, io);
+            io.print("\nPress Enter to return to menu...");
+            io.flush();
+            let _ = io.read_line();
         }
     }
 }
@@ -413,6 +428,9 @@ fn wifi_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, executor
             }
         } else {
             wifi::execute_wifi_audit(config, use_proxy, &*executor, io);
+            io.print("\nPress Enter to return to menu...");
+            io.flush();
+            let _ = io.read_line();
         }
     }
 }
@@ -443,6 +461,9 @@ fn bluetooth_wrapper(arg: &str, _extra: Option<&str>, use_proxy: bool, executor:
             }
         } else {
             bluetooth::execute_bluetooth(config, use_proxy, &*executor, io);
+            io.print("\nPress Enter to return to menu...");
+            io.flush();
+            let _ = io.read_line();
         }
     }
 }
@@ -473,6 +494,9 @@ fn sniffer_wrapper(interface: &str, _extra: Option<&str>, use_proxy: bool, execu
             }
         } else {
             sniffer::execute_sniffer(config, use_proxy, &*executor, io);
+            io.print("\nPress Enter to return to menu...");
+            io.flush();
+            let _ = io.read_line();
         }
     }
 }
