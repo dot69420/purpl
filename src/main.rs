@@ -343,7 +343,7 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecut
             ("Exit", "0"),
         ];
 
-        match ui::show_menu_loop(io, "Main Menu", &menu_items, &extras) {
+        match ui::show_menu_loop(io, "Main Menu", &menu_items, &extras, true) {
             ui::MenuResult::Item(idx) => {
                 let tool = &main_menu[idx];
                 execute_tool(tool, use_proxy, executor.clone(), io, Some(job_manager.clone()));
@@ -410,7 +410,7 @@ fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: Arc<dy
             ("Back to Main Menu", "0"),
         ];
 
-        match ui::show_menu_loop(io, title, &menu_items, &extras) {
+        match ui::show_menu_loop(io, title, &menu_items, &extras, false) {
             ui::MenuResult::Item(idx) => {
                 let tool = &tools[idx];
                 execute_tool(tool, use_proxy, executor.clone(), io, job_manager.clone());

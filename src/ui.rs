@@ -6,6 +6,16 @@ pub fn clear_screen() {
     let _ = Command::new("clear").status();
 }
 
+pub fn print_main_menu_banner(io: &dyn IoHandler) {
+    io.println(&format!("{}", "    ██████╗ ██╗   ██╗██████╗ ██████╗ ██╗     ".magenta().bold()));
+    io.println(&format!("{}", "    ██╔══██╗██║   ██║██╔══██╗██╔══██╗██║     ".bright_black().bold()));
+    io.println(&format!("{}", "    ██████╔╝██║   ██║██████╔╝██████╔╝██║     ".magenta().bold()));
+    io.println(&format!("{}", "    ██╔═══╝ ██║   ██║██╔══██╗██╔═══╝ ██║     ".bright_black().bold()));
+    io.println(&format!("{}", "    ██║     ╚██████╔╝██║  ██║██║     ███████╗".magenta().bold()));
+    io.println(&format!("{}", "    ╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚══════╝".bright_black().bold()));
+    io.println(&format!("\n{}", "              Purple Team Helper Tool\n".magenta().bold()));
+}
+
 pub fn print_header(io: &dyn IoHandler, _title: &str, subtitle: Option<&str>) {
     let width = 60;
     let border = "=".repeat(width).purple().bold();
@@ -46,10 +56,15 @@ pub fn show_menu_loop<T>(
     title: &str,
     items: &[MenuItem<T>],
     extra_options: &[(&str, &str)],
+    is_main_menu: bool,
 ) -> MenuResult {
     loop {
         clear_screen();
-        print_header(io, "PURPL CLI", Some(title));
+        if is_main_menu {
+            print_main_menu_banner(io);
+        } else {
+            print_header(io, "PURPL CLI", Some(title));
+        }
 
         for (i, item) in items.iter().enumerate() {
              io.println(&format!(" {} {} {}", 
