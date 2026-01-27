@@ -154,7 +154,7 @@ fn select_scan_profile(is_large_network: bool, io: &dyn IoHandler) -> ScanProfil
         io.println(&format!("[{}] {} - {}", i + 1, profile.name.green(), profile.description));
     }
 
-    let input = ui::get_input_styled(io, &format!("Choose a profile [1-{}]: ", profiles.len()));
+    let input = io.read_input(&format!("\nChoose a profile [1-{}]", profiles.len()), Some("1"));
 
     if let Ok(idx) = input.trim().parse::<usize>() {
         if idx > 0 && idx <= profiles.len() {

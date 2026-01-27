@@ -6,6 +6,7 @@ pub trait IoHandler {
     fn print(&self, msg: &str);
     fn flush(&self);
     fn read_line(&self) -> String;
+    fn read_input(&self, prompt: &str, default: Option<&str>) -> String;
 }
 
 pub struct RealIoHandler;
@@ -27,6 +28,23 @@ impl IoHandler for RealIoHandler {
         let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap_or_default();
         input
+    }
+
+    fn read_input(&self, prompt: &str, default: Option<&str>) -> String {
+        let prompt_text = if let Some(def) = default {
+            format!("{} [{}] ", prompt, def)
+        } else {
+            format!("{} ", prompt)
+        };
+        self.print(&prompt_text);
+        self.flush();
+        let input = self.read_line();
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            default.unwrap_or("").to_string()
+        } else {
+            trimmed.to_string()
+        }
     }
 }
 
@@ -70,6 +88,23 @@ impl IoHandler for MockIoHandler {
             self.input_queue.borrow_mut().remove(0)
         } else {
             String::new()
+        }
+    }
+
+    fn read_input(&self, prompt: &str, default: Option<&str>) -> String {
+        let prompt_text = if let Some(def) = default {
+            format!("{} [{}] ", prompt, def)
+        } else {
+            format!("{} ", prompt)
+        };
+        self.print(&prompt_text);
+        
+        let input = self.read_line();
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            default.unwrap_or("").to_string()
+        } else {
+            trimmed.to_string()
         }
     }
 }
@@ -121,10 +156,16 @@ impl IoHandler for CapturingIoHandler {
     }
 
     fn read_line(&self) -> String {
-        // Background jobs don't support input.
-        // Even in foreground "Job" mode, if we use this handler, we typically execute non-interactive logic.
-        // If interactive input is needed in foreground job, we'd need to forward stdin.
-        // But for now, we assume Config/Exec split where Exec is non-interactive.
+        // Background jobs don't support input directly.
+        // For testing, we might need a way to mock input for CapturingIoHandler,
+        // but for now, it returns empty, effectively making interactive steps fail/skip
+        // in a captured background context.
         String::new()
+    }
+
+    fn read_input(&self, _prompt: &str, default: Option<&str>) -> String {
+        // Similar to read_line, background jobs generally don't take interactive input.
+        // Return default if available, otherwise empty.
+        default.unwrap_or("").to_string()
     }
 }

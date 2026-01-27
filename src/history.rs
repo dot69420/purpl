@@ -80,6 +80,37 @@ pub fn print_history(io: &dyn IoHandler) {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct LastTarget {
+    target: String,
+}
+
+pub fn get_last_target() -> Option<String> {
+    let path = "last_target.json";
+    if !Path::new(path).exists() {
+        return None;
+    }
+    match fs::read_to_string(path) {
+        Ok(content) => {
+             if let Ok(data) = serde_json::from_str::<LastTarget>(&content) {
+                 if !data.target.is_empty() {
+                     return Some(data.target);
+                 }
+             }
+             None
+        },
+        Err(_) => None,
+    }
+}
+
+pub fn save_last_target(target: &str) {
+    if target.trim().is_empty() { return; }
+    let data = LastTarget { target: target.to_string() };
+    if let Ok(json) = serde_json::to_string(&data) {
+        let _ = fs::write("last_target.json", json);
+    }
+}
+
 #[cfg(test)]
 #[path = "history_tests.rs"]
 mod tests;
