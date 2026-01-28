@@ -342,14 +342,18 @@ fn detect_protocol(flags: &str, payload: &str) -> String {
 }
 
 fn extract_readable(payload: &str) -> String {
-    let mut clean = String::new();
+    let mut clean = String::with_capacity(payload.len());
+    let mut buffer = String::new();
     for line in payload.lines() {
-        let filtered: String = line.chars()
-            .filter(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
-            .collect();
+        buffer.clear();
+        for c in line.chars() {
+            if c.is_ascii_graphic() || c.is_ascii_whitespace() {
+                buffer.push(c);
+            }
+        }
         
-        if filtered.len() > 3 {
-            clean.push_str(&filtered);
+        if buffer.len() > 3 {
+            clean.push_str(&buffer);
             clean.push('\n');
         }
     }

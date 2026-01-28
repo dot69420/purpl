@@ -45,6 +45,14 @@ mod tests {
     }
 
     #[test]
+    fn test_print_banner() {
+        let io = MockIoHandler::new();
+        crate::ui::print_main_menu_banner(&io);
+        let out = io.get_output();
+        assert!(out.contains("Purple Team Helper Tool"));
+    }
+
+    #[test]
     fn test_run_legacy_script_sudo() {
         let executor = MockExecutor::new();
         let io = MockIoHandler::new();
