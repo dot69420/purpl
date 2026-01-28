@@ -170,7 +170,7 @@ fn select_wifi_profile(io: &dyn IoHandler) -> WifiProfile {
         WifiProfile::new(
             "Target Specific",
             "Target a specific network by ESSID (Name).",
-            &["--kill"] // Placeholder, we will ask for ESSID
+            &["--kill"]
         ),
         WifiProfile::new(
             "Silent/Stealth",
@@ -189,23 +189,8 @@ fn select_wifi_profile(io: &dyn IoHandler) -> WifiProfile {
 
     if let Ok(idx) = input.trim().parse::<usize>() {
         if idx > 0 && idx <= profiles.len() {
-            let mut selected = profiles.into_iter().nth(idx - 1).unwrap();
-            
-            // Handle Targeted Input
-            if selected.name == "Target Specific" {
-                io.print(&format!("{}", "Enter Target ESSID (Name): ".yellow()));
-                io.flush();
-                let essid = io.read_line();
-                let essid = essid.trim();
-                if !essid.is_empty() {
-                    selected.flags.push("-e".to_string());
-                    selected.flags.push(essid.to_string());
-                } else {
-                    io.println(&format!("{}", "[!] No ESSID provided. Reverting to default.".red()));
-                }
-            }
-            
-            return selected;
+            let selected = profiles.into_iter().nth(idx - 1).unwrap();
+            return handle_target_specific_profile(selected, io);
         }
     }
 
@@ -215,6 +200,22 @@ fn select_wifi_profile(io: &dyn IoHandler) -> WifiProfile {
         "Standard Wifite run. Scans all networks, targets everything.",
         &["--kill"]
     )
+}
+
+fn handle_target_specific_profile(mut profile: WifiProfile, io: &dyn IoHandler) -> WifiProfile {
+    if profile.name == "Target Specific" {
+        io.print(&format!("{}", "Enter Target ESSID (Name): ".yellow()));
+        io.flush();
+        let essid = io.read_line();
+        let essid = essid.trim();
+        if !essid.is_empty() {
+            profile.flags.push("-e".to_string());
+            profile.flags.push(essid.to_string());
+        } else {
+            io.println(&format!("{}", "[!] No ESSID provided. Reverting to default.".red()));
+        }
+    }
+    profile
 }
 
 pub fn build_wifite_command(

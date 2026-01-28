@@ -46,6 +46,42 @@ mod tests {
     }
 
     #[test]
+    fn test_run_wifi_audit_target_specific() {
+        let executor = MockExecutor::new();
+        let io = MockIoHandler::new();
+
+        // Register success for all intermediate tools
+        executor.register_success("airmon-ng");
+        executor.register_success("ip");
+        executor.register_success("macchanger");
+        executor.register_success("systemctl");
+        executor.register_success("wifite");
+
+        // iwconfig output
+        executor.register_output("iwconfig", b"wlan0mon  Mode:Monitor  Frequency:2.437 GHz");
+
+        // Input: Profile "5" (Target Specific)
+        io.add_input("5\n");
+        // Input: ESSID "TargetNet"
+        io.add_input("TargetNet\n");
+
+        run_wifi_audit("wlan0", false, &executor, &io);
+
+        let calls = executor.get_calls();
+
+        // Find the wifite call (should be call index 6, similar to previous test)
+        assert_eq!(calls[6].command, "wifite");
+        let args = &calls[6].args;
+
+        // Verify flags
+        assert!(args.contains(&"-i".to_string()));
+        assert!(args.contains(&"wlan0mon".to_string()));
+        assert!(args.contains(&"--kill".to_string()));
+        assert!(args.contains(&"-e".to_string()));
+        assert!(args.contains(&"TargetNet".to_string()));
+    }
+
+    #[test]
     fn test_build_wifite_command_basic() {
         let (cmd, args) = build_wifite_command("wifite", "wlan0", &["--kill"], false);
         assert_eq!(cmd, "wifite");
