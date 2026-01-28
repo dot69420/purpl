@@ -1,5 +1,6 @@
 use std::io::{BufRead, Write};
 use std::fs::{self, File};
+use std::sync::OnceLock;
 use chrono::Local;
 use colored::*;
 use regex::Regex;
@@ -286,7 +287,10 @@ fn select_interface(use_sudo: bool, executor: &dyn CommandExecutor, io: &dyn IoH
 }
 
 fn process_packet_block(block: &str, file: &mut File, io: &dyn IoHandler) {
-    let re_header = Regex::new(r"(\d{2}:\d{2}:\d{2}\.\d+)\sIP\s([\w\.-]+)\s>\s([\w\.-]+):\s(.*)").unwrap();
+    static RE_HEADER: OnceLock<Regex> = OnceLock::new();
+    let re_header = RE_HEADER.get_or_init(|| {
+        Regex::new(r"(\d{2}:\d{2}:\d{2}\.\d+)\sIP\s([\w\.-]+)\s>\s([\w\.-]+):\s(.*)").unwrap()
+    });
     
     let lines: Vec<&str> = block.lines().collect();
     if lines.is_empty() { return; }
@@ -338,14 +342,18 @@ fn detect_protocol(flags: &str, payload: &str) -> String {
 }
 
 fn extract_readable(payload: &str) -> String {
-    let mut clean = String::new();
+    let mut clean = String::with_capacity(payload.len());
+    let mut buffer = String::new();
     for line in payload.lines() {
-        let filtered: String = line.chars()
-            .filter(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
-            .collect();
+        buffer.clear();
+        for c in line.chars() {
+            if c.is_ascii_graphic() || c.is_ascii_whitespace() {
+                buffer.push(c);
+            }
+        }
         
-        if filtered.len() > 3 {
-            clean.push_str(&filtered);
+        if buffer.len() > 3 {
+            clean.push_str(&buffer);
             clean.push('\n');
         }
     }
