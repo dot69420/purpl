@@ -19,21 +19,34 @@ pub struct DashboardItem {
 }
 
 pub fn show_dashboard(job_manager: &Arc<JobManager>, io: &dyn IoHandler) {
+    let mut current_page = 0;
+    let page_size = 20;
+
     loop {
         let items = collect_items(job_manager);
-        
-        // Sort by timestamp descending (newest first)
-        // Timestamp format is mixed, so sorting might be imperfect without unified parsing.
-        // For now, we rely on the order of collection: Jobs (newest) -> History/Files (sorted).
-        // Let's just keep the order returned by collect_items for now.
+        let total_items = items.len();
+        let total_pages = if total_items > 0 {
+            (total_items + page_size - 1) / page_size
+        } else {
+            1
+        };
 
-        // Pagination or Scroll?
-        // Let's implement a simple list with 20 items per page if needed, or just list all.
-        // Given terminal context, 20 is safe.
-        
-        display_list(&items, io);
+        // Ensure current_page is valid
+        if current_page >= total_pages {
+            current_page = if total_pages > 0 { total_pages - 1 } else { 0 };
+        }
 
-        io.println("\n[ID] View Details  [R] Refresh  [0] Back");
+        display_list(&items, io, current_page, page_size);
+
+        let mut options = "\n[ID] View Details  [R] Refresh  [0] Back".to_string();
+        if current_page < total_pages - 1 {
+            options.push_str("  [N] Next Page");
+        }
+        if current_page > 0 {
+            options.push_str("  [P] Prev Page");
+        }
+
+        io.println(&options);
         io.print("Select option: ");
         io.flush();
         
@@ -43,12 +56,20 @@ pub fn show_dashboard(job_manager: &Arc<JobManager>, io: &dyn IoHandler) {
             break;
         } else if input.eq_ignore_ascii_case("r") || input.is_empty() {
             continue;
+        } else if input.eq_ignore_ascii_case("n") {
+            if current_page < total_pages - 1 {
+                current_page += 1;
+            }
+        } else if input.eq_ignore_ascii_case("p") {
+            if current_page > 0 {
+                current_page -= 1;
+            }
         } else {
             // Try to find item by ID
             if let Some(item) = items.iter().find(|i| i.id == input) {
                 view_item_details(item, job_manager, io);
             } else {
-                io.println(&format!("{}", "[!] Invalid ID.".red()));
+                io.println(&format!("{}", "[!] Invalid ID or Option.".red()));
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
         }
@@ -147,7 +168,7 @@ fn collect_items(job_manager: &Arc<JobManager>) -> Vec<DashboardItem> {
     items
 }
 
-fn display_list(items: &[DashboardItem], io: &dyn IoHandler) {
+fn display_list(items: &[DashboardItem], io: &dyn IoHandler, page: usize, page_size: usize) {
     crate::ui::clear_screen();
     crate::ui::print_header(io, "PURPL CLI", Some("Task & Result Dashboard"));
     
@@ -156,31 +177,36 @@ fn display_list(items: &[DashboardItem], io: &dyn IoHandler) {
         return;
     }
 
+    let total_items = items.len();
+    let total_pages = (total_items + page_size - 1) / page_size;
+    let start_index = page * page_size;
+    let end_index = std::cmp::min(start_index + page_size, total_items);
+
+    io.println(&format!("Page {}/{} (Total: {})", page + 1, total_pages, total_items));
+
     // Header
     io.println(&format!("{:<6} | {:<20} | {:<12} | {:<25} | {:<15}", 
         "ID", "TIMESTAMP", "TOOL", "TARGET", "STATUS"));
     io.println(&"-".repeat(90));
 
     // Rows
-    for item in items.iter().take(30) { // Limit to 30 most recent
-        // Truncate target if too long
-        let target = if item.target.len() > 22 {
-            format!("{}...", &item.target[..20])
-        } else {
-            item.target.clone()
-        };
+    if start_index < total_items {
+        for item in &items[start_index..end_index] {
+            // Truncate target if too long
+            let target = if item.target.len() > 22 {
+                format!("{}...", &item.target[..20])
+            } else {
+                item.target.clone()
+            };
 
-        io.println(&format!("{:<6} | {:<20} | {:<12} | {:<25} | {:<15}", 
-            item.id.white().bold(), 
-            item.timestamp, 
-            item.tool_type.cyan(), 
-            target, 
-            item.status
-        ));
-    }
-    
-    if items.len() > 30 {
-        io.println(&format!("... and {} more items.", items.len() - 30).italic());
+            io.println(&format!("{:<6} | {:<20} | {:<12} | {:<25} | {:<15}",
+                item.id.white().bold(),
+                item.timestamp,
+                item.tool_type.cyan(),
+                target,
+                item.status
+            ));
+        }
     }
 }
 
@@ -211,4 +237,74 @@ fn view_item_details(item: &DashboardItem, job_manager: &Arc<JobManager>, io: &d
     io.print("\nPress Enter to return...");
     io.flush();
     let _ = io.read_line();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io_handler::MockIoHandler;
+    use crate::executor::MockExecutor;
+    use std::sync::Arc;
+    use crate::job_manager::JobManager;
+
+    #[test]
+    fn test_dashboard_pagination() {
+        let job_manager = Arc::new(JobManager::new());
+        let executor = Arc::new(MockExecutor::new());
+        let io = MockIoHandler::new();
+
+        // Create 40 jobs
+        // 40 jobs -> 20 items per page -> 2 pages
+        for i in 0..40 {
+            job_manager.spawn_job(&format!("Job {}", i), |_, _| {}, executor.clone(), true);
+        }
+
+        // Sequence of inputs:
+        // 1. Initial view (Page 1) -> User inputs 'n' for Next Page
+        // 2. View (Page 2) -> User inputs 'p' for Prev Page
+        // 3. View (Page 1) -> User inputs '0' to Back/Exit
+        io.add_input("n");
+        io.add_input("p");
+        io.add_input("0");
+
+        show_dashboard(&job_manager, &io);
+
+        let output = io.get_output();
+
+        // Check that we have at least 2 pages
+        assert!(output.contains("Page 1/"));
+        assert!(output.contains("Page 2/"));
+
+        // J40 (newest) should be on Page 1
+        // J1 (oldest) should be on Page 2 (since we have 40 jobs + potential files)
+        // Actually, J1 is the 40th item (or later if files are newer? No files are usually older or mixed).
+        // In the debug output, J1 is on Page 2.
+
+        // We can check that the "Next Page" option is offered on Page 1
+        assert!(output.contains("[N] Next Page"));
+
+        // We can check that "Prev Page" is offered when we are on Page 2
+        // Since the output is concatenated, we should see "[P] Prev Page" somewhere.
+        assert!(output.contains("[P] Prev Page"));
+
+        // Verify flow: Page 1 -> Page 2 -> Page 1
+        // We can split output by "Select option:" to analyze frames
+        let frames: Vec<&str> = output.split("Select option:").collect();
+        // Frame 0: Page 1
+        // Frame 1: Page 2 (after 'n')
+        // Frame 2: Page 1 (after 'p')
+        // Frame 3: Exit prompt/result
+
+        if frames.len() >= 3 {
+            assert!(frames[0].contains("Page 1/"));
+            assert!(frames[1].contains("Page 2/"));
+            assert!(frames[2].contains("Page 1/"));
+
+            // Content checks
+            assert!(frames[0].contains("J40"));
+            assert!(!frames[0].contains("J1 ")); // J1 should likely be on page 2 or 3
+
+            assert!(frames[1].contains("J1 ")); // J1 is on page 2 in the debug output (items 21-40)
+        }
+    }
 }
