@@ -23,17 +23,11 @@ pub struct HostInfo {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct WifiteEntry {
+pub struct WifiteReport {
     pub bssid: String,
     pub essid: String,
     pub key: Option<String>,
     pub encryption: Option<String>,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize, Debug)]
-struct WifiteReport {
-    // Placeholder
 }
 
 pub fn display_scan_report(scan_dir: &Path, io: &dyn IoHandler) {
@@ -80,7 +74,7 @@ pub fn display_scan_report(scan_dir: &Path, io: &dyn IoHandler) {
          match fs::read_to_string(&path) {
             Ok(content) => {
                  let entries = parse_wifite_json(&content, io);
-                 print_wifite_entries(entries, io);
+                 print_wifite_report(entries, io);
                  any_report_found = true;
             },
             Err(e) => {
@@ -303,8 +297,8 @@ pub fn print_nmap_hosts(hosts: Vec<HostInfo>, io: &dyn IoHandler) {
     }
 }
 
-pub fn parse_wifite_json(content: &str, io: &dyn IoHandler) -> Vec<WifiteEntry> {
-    match serde_json::from_str::<Vec<WifiteEntry>>(content) {
+pub fn parse_wifite_json(content: &str, io: &dyn IoHandler) -> Vec<WifiteReport> {
+    match serde_json::from_str::<Vec<WifiteReport>>(content) {
         Ok(e) => e,
         Err(_) => {
             io.println(&format!("{}", "[!] Could not parse cracked.json structure.".yellow()));
@@ -313,7 +307,7 @@ pub fn parse_wifite_json(content: &str, io: &dyn IoHandler) -> Vec<WifiteEntry> 
     }
 }
 
-pub fn print_wifite_entries(entries: Vec<WifiteEntry>, io: &dyn IoHandler) {
+pub fn print_wifite_report(entries: Vec<WifiteReport>, io: &dyn IoHandler) {
     if entries.is_empty() {
         io.println("No cracked networks found in report.");
         return;
