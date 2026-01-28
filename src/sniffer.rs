@@ -2,6 +2,7 @@ use std::io::{BufRead, Write};
 use std::fs::{self, File};
 use chrono::Local;
 use colored::*;
+use lazy_static::lazy_static;
 use regex::Regex;
 use crate::history::{append_history, HistoryEntry};
 use crate::executor::CommandExecutor;
@@ -268,15 +269,17 @@ fn select_interface(use_sudo: bool, executor: &dyn CommandExecutor, io: &dyn IoH
     Some(manual)
 }
 
+lazy_static! {
+    static ref RE_HEADER: Regex = Regex::new(r"(\d{2}:\d{2}:\d{2}\.\d+)\sIP\s([\w\.-]+)\s>\s([\w\.-]+):\s(.*)").unwrap();
+}
+
 fn process_packet_block(block: &str, file: &mut File, io: &dyn IoHandler) {
-    let re_header = Regex::new(r"(\d{2}:\d{2}:\d{2}\.\d+)\sIP\s([\w\.-]+)\s>\s([\w\.-]+):\s(.*)").unwrap();
-    
     let lines: Vec<&str> = block.lines().collect();
     if lines.is_empty() { return; }
 
     let header = lines[0];
     
-    if let Some(caps) = re_header.captures(header) {
+    if let Some(caps) = RE_HEADER.captures(header) {
         let time = &caps[1];
         let src = &caps[2];
         let dst = &caps[3];
