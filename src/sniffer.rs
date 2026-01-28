@@ -1,5 +1,6 @@
 use std::io::{BufRead, Write};
 use std::fs::{self, File};
+use std::sync::OnceLock;
 use chrono::Local;
 use colored::*;
 use regex::Regex;
@@ -286,7 +287,10 @@ fn select_interface(use_sudo: bool, executor: &dyn CommandExecutor, io: &dyn IoH
 }
 
 fn process_packet_block(block: &str, file: &mut File, io: &dyn IoHandler) {
-    let re_header = Regex::new(r"(\d{2}:\d{2}:\d{2}\.\d+)\sIP\s([\w\.-]+)\s>\s([\w\.-]+):\s(.*)").unwrap();
+    static RE_HEADER: OnceLock<Regex> = OnceLock::new();
+    let re_header = RE_HEADER.get_or_init(|| {
+        Regex::new(r"(\d{2}:\d{2}:\d{2}\.\d+)\sIP\s([\w\.-]+)\s>\s([\w\.-]+):\s(.*)").unwrap()
+    });
     
     let lines: Vec<&str> = block.lines().collect();
     if lines.is_empty() { return; }
