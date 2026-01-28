@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::{Cli, Commands, Tool, print_banner, run_legacy_script, run_interactive_mode};
+    use crate::{Cli, Commands, Tool, run_legacy_script, run_interactive_mode};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
     use crate::job_manager::JobManager;
@@ -47,9 +47,9 @@ mod tests {
     #[test]
     fn test_print_banner() {
         let io = MockIoHandler::new();
-        print_banner(&io);
+        crate::ui::print_main_menu_banner(&io);
         let out = io.get_output();
-        assert!(out.contains("PURPL Control Center"));
+        assert!(out.contains("Purple Team Helper Tool"));
     }
 
     #[test]
