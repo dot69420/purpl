@@ -1,34 +1,37 @@
 use std::fs;
+use std::sync::Arc;
 
 use chrono::Local;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use colored::*;
+use serde::{Deserialize, Serialize};
 use crate::history::{append_history, HistoryEntry};
 use crate::executor::CommandExecutor;
 use crate::io_handler::IoHandler;
 use crate::ui;
+use crate::job_manager::Job;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanProfile {
     pub name: String,
     pub description: String,
-    pub flags: Vec<&'static str>,
+    pub flags: Vec<String>,
     pub requires_root: bool,
 }
 
 impl ScanProfile {
-    fn new(name: &str, description: &str, flags: &[&'static str], requires_root: bool) -> Self {
+    fn new(name: &str, description: &str, flags: &[&str], requires_root: bool) -> Self {
         Self {
             name: name.to_string(),
             description: description.to_string(),
-            flags: flags.to_vec(),
+            flags: flags.iter().map(|s| s.to_string()).collect(),
             requires_root,
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NmapConfig {
     pub target: String,
     pub profile: ScanProfile,
@@ -167,7 +170,7 @@ fn select_scan_profile(is_large_network: bool, io: &dyn IoHandler) -> ScanProfil
     if let Ok(idx) = input.trim().parse::<usize>() {
         if idx > 0 && idx <= profiles.len() {
             let p = &profiles[idx - 1];
-            return ScanProfile::new(&p.name, &p.description, &p.flags, p.requires_root);
+            return p.clone();
         }
     }
 
@@ -180,7 +183,7 @@ fn select_scan_profile(is_large_network: bool, io: &dyn IoHandler) -> ScanProfil
     )
 }
 
-pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler, job: Option<Arc<Job>>) {
     if use_proxy {
         io.println(&format!("{}", "[*] Proxychains Enabled. Traffic will be routed through configured proxies.".magenta().bold()));
     }
@@ -372,6 +375,13 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
         for _ in 0..num_threads {
             s.spawn(|| {
                 loop {
+                    // Check cancellation
+                    if let Some(j) = &job {
+                        if j.is_cancelled() {
+                            break;
+                        }
+                    }
+
                     let host = {
                         let mut queue = hosts_queue.lock().unwrap();
                         queue.pop()
@@ -383,7 +393,13 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
                             let (final_cmd, final_args) = build_nmap_command("nmap", &scan_flags_str, &h, &scan_file, use_proxy, config.use_sudo);
                             let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
-                            let _ = executor.execute_silent(&final_cmd, &final_args_str);
+                            let _ = executor.execute_streamed(
+                                &final_cmd, 
+                                &final_args_str, 
+                                "", 
+                                job.as_ref().map(|j| j.cancelled.clone()),
+                                Box::new(|line| io.println(line))
+                            );
                             bar.inc(1);
                         }
                         None => break,
@@ -393,6 +409,15 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
         }
     });
 
+    if let Some(j) = &job {
+        if j.is_cancelled() {
+             io.println(&format!("{}", "\n[!] Scan cancelled by user.".yellow().bold()));
+             bar.finish_with_message("Cancelled");
+             let _ = append_history(&HistoryEntry::new("Nmap", &config.target, "Cancelled"));
+             return;
+        }
+    }
+
     bar.finish_with_message("All scans complete!");
     io.println(&format!("{}", format!("\n[+] Scan completed. Results in {}", output_dir).green()));
     let _ = append_history(&HistoryEntry::new("Nmap", &config.target, "Success"));
@@ -401,7 +426,7 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
 // Deprecated wrapper for backward compatibility if needed, but we should update callers
 pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: bool, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
     let config = configure_nmap(target, custom_ports, skip_discovery, extra_args, executor, io);
-    execute_nmap_scan(config, use_proxy, executor, io);
+    execute_nmap_scan(config, use_proxy, executor, io, None);
 }
 
 pub fn build_nmap_command(

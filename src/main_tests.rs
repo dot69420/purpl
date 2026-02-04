@@ -1,10 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use crate::{Cli, Commands, Tool, run_legacy_script, run_interactive_mode};
+    use crate::{Cli, Commands, run_interactive_mode};
+    use crate::tool_model::{Tool, SpecializedStrategy, ToolImplementation, ToolSource};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
     use crate::job_manager::JobManager;
     use std::sync::Arc;
+    use std::fs;
     use clap::CommandFactory;
     use clap::Parser;
 
@@ -30,13 +32,16 @@ mod tests {
 
     #[test]
     fn test_tool_creation() {
-        let tool = Tool::new("Test", "script.sh", true, "Arg:", false, None);
+        let tool = Tool::core_specialized("Test", "Desc", SpecializedStrategy::Nmap);
         assert_eq!(tool.name, "Test");
-        assert_eq!(tool.script, "script.sh");
-        assert!(tool.needs_arg);
-        assert_eq!(tool.arg_prompt, "Arg:");
-        assert!(!tool.use_sudo);
-        assert!(tool.function.is_none());
+        match tool.implementation {
+            ToolImplementation::Specialized(SpecializedStrategy::Nmap) => assert!(true),
+            _ => assert!(false),
+        }
+        match tool.source {
+            ToolSource::Core => assert!(true),
+            _ => assert!(false),
+        }
     }
 
     #[test]
@@ -53,44 +58,12 @@ mod tests {
     }
 
     #[test]
-    fn test_run_legacy_script_sudo() {
-        let executor = MockExecutor::new();
-        let io = MockIoHandler::new();
-
-        // Input: Enter to continue
-        io.add_input("\n");
-
-        run_legacy_script("myscript.sh", "arg1", true, &executor, &io);
-
-        let calls = executor.get_calls();
-        assert!(calls.len() >= 1);
-        assert_eq!(calls[0].command, "sudo");
-        assert!(calls[0].args.contains(&"./myscript.sh".to_string()));
-        assert!(calls[0].args.contains(&"arg1".to_string()));
-    }
-
-    #[test]
-    fn test_run_legacy_script_no_sudo() {
-        let executor = MockExecutor::new();
-        let io = MockIoHandler::new();
-
-        io.add_input("\n");
-
-        run_legacy_script("myscript.sh", "arg1", false, &executor, &io);
-
-        let calls = executor.get_calls();
-        assert!(calls.len() >= 1);
-        assert_eq!(calls[0].command, "./myscript.sh");
-        assert!(calls[0].args.contains(&"arg1".to_string()));
-    }
-
-    #[test]
     fn test_run_interactive_mode_exit() {
         let executor = Arc::new(MockExecutor::new());
         let io = MockIoHandler::new();
         let job_manager = Arc::new(JobManager::new());
-        // Exit is now option 8 (5 tools + 3 options)
-        io.add_input("8\n");
+        // Exit is option 0
+        io.add_input("0\n");
 
         run_interactive_mode(false, executor.clone(), &io, job_manager);
 
@@ -113,17 +86,20 @@ mod tests {
         // 3. Tool needs arg: "Enter target IP: "
         io.add_input("127.0.0.1\n");
 
-        // 4. Nmap Profile Selection (Input 2)
+        // 4. Background prompt (New logic: Target -> BG -> Profile)
+        io.add_input("n\n");
+
+        // 5. Nmap Profile Selection (Input 2)
         io.add_input("2\n");
 
-        // 5. After tool runs, submenu asks "Press Enter to return to menu..."
+        // 6. After tool runs, submenu asks "Press Enter to return to menu..."
         io.add_input("\n");
 
-        // 6. Back to Main Menu (Option 0 in Submenu)
+        // 7. Back to Main Menu (Option 0 in Submenu)
         io.add_input("0\n");
 
-        // 7. Exit (Option 9 in Main Menu)
-        io.add_input("9\n"); 
+        // 8. Exit (Option 0 in Main Menu)
+        io.add_input("0\n"); 
 
         // Mock nmap host discovery output using new registry
         executor.register_output("nmap", b"Nmap scan report for 127.0.0.1");
@@ -139,6 +115,10 @@ mod tests {
 
     #[test]
     fn test_interactive_mode_full_flow() {
+        // Ensure wordlists/common.txt exists for Quick Scan profile
+        let _ = fs::create_dir_all("wordlists");
+        let _ = fs::write("wordlists/common.txt", "test");
+
         let executor = Arc::new(MockExecutor::new());
         let io = MockIoHandler::new();
         let job_manager = Arc::new(JobManager::new());
@@ -148,7 +128,10 @@ mod tests {
         executor.register_success("gobuster");
         executor.register_success("responder");
         executor.register_success("tcpdump");
-        executor.register_output("ip", b"1: lo: <LOOPBACK...>\n2: eth0: <BROADCAST...>"); 
+        // Mock sudo call for sniffer if it asks (it shouldn't if root, but test executor mimics non-root usually? MockExecutor has is_root() -> true by default).
+        // If is_root() is true, it won't ask sudo.
+        
+        executor.register_output("ip", b"1: lo: <LOOPBACK...\n>2: eth0: <BROADCAST...>"); 
         
         // --- Sequence of Inputs ---
 
@@ -156,33 +139,34 @@ mod tests {
         io.add_input("1\n"); // Select Recon Category
         io.add_input("1\n"); // Select Nmap
         io.add_input("10.0.0.1\n"); // Target
-        io.add_input("n\n"); // Background: No
+        io.add_input("n\n"); // Background: No (NEW ORDER)
         io.add_input("2\n"); // Profile: Quick
         io.add_input("\n"); // Return to submenu
+        io.add_input("\n"); // EXTRA
         io.add_input("0\n"); // Back to Main Menu
 
         // 2. Web Arsenal (Option 2) -> Gobuster (Option 1)
         io.add_input("2\n"); // Enter Web Submenu
         io.add_input("1\n"); // Select Gobuster
         io.add_input("http://10.0.0.1\n"); // Target
-        io.add_input("3\n"); // Profile: Manual
-        io.add_input("wordlists/test.txt\n"); // Wordlist
-        io.add_input("n\n"); // Background: No
+        io.add_input("n\n"); // Background: No (NEW POSITION)
+        io.add_input("1\n"); // Profile 1: Quick Scan
         io.add_input("\n"); // Press Enter to return
+        io.add_input("\n"); // EXTRA
         io.add_input("0\n"); // Back to Main Menu
 
-        // 3. Network Ops (Option 4) -> Sniffer (Option 1)
+        // 3. Network Ops (Option 4) -> Sniffer (Option 1 - Core Standard)
         io.add_input("4\n"); // Enter NetOps Submenu
         io.add_input("1\n"); // Select Sniffer
-        io.add_input("1\n"); // Interface Selection (1: eth0)
-        io.add_input("4\n"); // Profile: ICMP
-        io.add_input("1\n"); // Mode: Passive
+        // Standard Tool Flow: Inputs -> BG -> Run
+        io.add_input("eth0\n"); // Interface Input
         io.add_input("n\n"); // Background: No
         io.add_input("\n"); // Press Enter to return
+        io.add_input("\n"); // EXTRA
         io.add_input("0\n"); // Back to Main Menu
 
-        // 4. Exit (Option 8)
-        io.add_input("8\n");
+        // 4. Exit (Option 0)
+        io.add_input("0\n");
 
         // --- Run ---
         run_interactive_mode(false, executor.clone(), &io, job_manager);

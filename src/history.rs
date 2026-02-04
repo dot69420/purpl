@@ -85,6 +85,7 @@ struct LastTarget {
     target: String,
 }
 
+#[allow(dead_code)]
 pub fn get_last_target() -> Option<String> {
     let path = "last_target.json";
     if !Path::new(path).exists() {

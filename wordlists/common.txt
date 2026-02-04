@@ -1,8 +1,1 @@
-index
-admin
-login
-spooky
-name
-generate
-app
-robots.txt
+test

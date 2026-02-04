@@ -19,13 +19,15 @@ pub fn print_main_menu_banner(io: &dyn IoHandler) {
 
 pub fn print_header(io: &dyn IoHandler, _title: &str, subtitle: Option<&str>) {
     let width = 60;
-    let border = "=".repeat(width).purple().bold();
+    // Hacker style: use a more "tech" border or just distinct colors
+    let border_char = "━";
+    let border = border_char.repeat(width).bright_magenta().bold();
     
     io.println(&format!("{}", border));
     io.println(&format!("{:^width$}", "PURPL - Purple Team Helper Tool", width = width).magenta().bold());
     
     if let Some(sub) = subtitle {
-        io.println(&format!("{:^width$}", sub, width = width).white().bold());
+        io.println(&format!("{:^width$}", sub, width = width).white().italic());
     }
     
     io.println(&format!("{}", border));
@@ -69,25 +71,30 @@ pub fn show_menu_loop<T>(
         }
 
         for (i, item) in items.iter().enumerate() {
-             io.println(&format!(" {} {} {}", 
-                format!("[{}]", i + 1).purple().bold(), 
-                "-".dimmed(),
-                item.label
+             // Style: [ 1 ] Option
+             io.println(&format!(" {}{}{} {}", 
+                "[".bright_magenta().dimmed(),
+                (i + 1).to_string().magenta().bold(),
+                "]".bright_magenta().dimmed(),
+                // "-".dimmed(), // Removed dash for cleaner look
+                item.label.white()
             ));
         }
 
         if !extra_options.is_empty() {
              io.println("");
              for (label, key) in extra_options {
-                 io.println(&format!(" {} {} {}", 
-                    format!("[{}]", key).yellow().bold(), 
-                    "-".dimmed(),
-                    label
+                 io.println(&format!(" {} {} {}  {}", 
+                    "[".cyan().dimmed(),
+                    key.cyan().bold(),
+                    "]".cyan().dimmed(),
+                    label.dimmed()
                 ));
             }
         }
 
-        io.print(&format!("\n{}", "Select >> ".purple().bold()));
+        // Prompt
+        io.print(&format!("\n{}", "Select >> ".bright_magenta().bold()));
         io.flush();
 
         let input = io.read_line();
@@ -102,7 +109,7 @@ pub fn show_menu_loop<T>(
         }
         
         for (_, key) in extra_options {
-            if trimmed == *key {
+            if trimmed.eq_ignore_ascii_case(key) {
                 return MenuResult::Extra(key.to_string());
             }
         }
@@ -113,7 +120,7 @@ pub fn show_menu_loop<T>(
 }
 
 pub fn get_input_styled(io: &dyn IoHandler, prompt: &str) -> String {
-    io.print(&format!("\n{} {}", prompt.cyan().bold(), ">> ".purple().bold().blink()));
+    io.print(&format!("\n{} {}", prompt.cyan().bold(), ">>".bright_magenta().bold().blink()));
     io.flush();
     io.read_line().trim().to_string()
 }

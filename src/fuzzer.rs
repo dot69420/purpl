@@ -116,7 +116,13 @@ pub fn execute_fuzzer(config: FuzzerConfig, use_proxy: bool, executor: &dyn Comm
     let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
     // 5. Execute
-    let status = executor.execute(&cmd_bin, &args_str);
+    let status = executor.execute_streamed(
+        &cmd_bin, 
+        &args_str, 
+        "", 
+        None, 
+        Box::new(|line| io.println(line))
+    );
 
     match status {
         Ok(s) => {

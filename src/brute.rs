@@ -225,7 +225,13 @@ pub fn execute_brute_force(config: BruteConfig, use_proxy: bool, executor: &dyn 
     );
     let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
-    let status = executor.execute(&final_cmd, &final_args_str);
+    let status = executor.execute_streamed(
+        &final_cmd, 
+        &final_args_str, 
+        "", 
+        None, 
+        Box::new(|line| io.println(line))
+    );
 
     match status {
         Ok(s) => {

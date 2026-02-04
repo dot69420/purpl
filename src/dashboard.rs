@@ -93,6 +93,7 @@ fn collect_items(job_manager: &Arc<JobManager>) -> Vec<DashboardItem> {
             JobStatus::Running => "RUNNING".yellow().bold().to_string(),
             JobStatus::Completed => "COMPLETED".green().bold().to_string(),
             JobStatus::Failed => "FAILED".red().bold().to_string(),
+            JobStatus::Stopped => "STOPPED".dimmed().bold().to_string(),
         };
         
         // Parse name for Tool and Target (Format: "Tool Target")
@@ -211,32 +212,79 @@ fn display_list(items: &[DashboardItem], io: &dyn IoHandler, page: usize, page_s
 }
 
 fn view_item_details(item: &DashboardItem, job_manager: &Arc<JobManager>, io: &dyn IoHandler) {
-    crate::ui::clear_screen();
-    crate::ui::print_header(io, "PURPL CLI", Some(&format!("Details for {}", item.id)));
+    loop {
+        crate::ui::clear_screen();
+        crate::ui::print_header(io, "PURPL CLI", Some(&format!("Details for {}", item.id)));
 
-    io.println(&format!("Tool: {}", item.tool_type));
-    io.println(&format!("Target: {}", item.target));
-    io.println(&format!("Time: {}", item.timestamp));
-    io.println(&format!("Status: {}", item.status));
-    io.println(&"-".repeat(40));
+        io.println(&format!("Tool: {}", item.tool_type));
+        io.println(&format!("Target: {}", item.target));
+        io.println(&format!("Time: {}", item.timestamp));
+        io.println(&format!("Status: {}", item.status));
+        io.println(&"-".repeat(40));
 
-    if let Some(job_id) = item.job_ref {
-        // Fetch from memory
-        if let Some(job) = job_manager.get_job(job_id) {
-            io.println(&format!("{}", "--- CONSOLE OUTPUT ---".blue()));
-            io.println(&job.io.get_output());
-            io.println(&format!("{}", "--- END OUTPUT ---".blue()));
-        } else {
-            io.println(&format!("{}", "[!] Job data expired or lost.".yellow()));
+        let mut is_running = false;
+
+        if let Some(job_id) = item.job_ref {
+            // Fetch from memory
+            if let Some(job) = job_manager.get_job(job_id) {
+                is_running = job.is_running();
+                io.println(&format!("{}", "--- CONSOLE OUTPUT ---".blue()));
+                io.println(&job.io.get_output());
+                io.println(&format!("{}", "--- END OUTPUT ---".blue()));
+            } else {
+                io.println(&format!("{}", "[!] Job data expired or lost.".yellow()));
+            }
+        } else if let Some(path) = &item.details_path {
+            // Fetch from file (using report module)
+            display_scan_report(path, io);
         }
-    } else if let Some(path) = &item.details_path {
-        // Fetch from file (using report module)
-        display_scan_report(path, io);
-    }
 
-    io.print("\nPress Enter to return...");
-    io.flush();
-    let _ = io.read_line();
+        // Actions
+        let mut prompt = "\n[Enter] Back".to_string();
+        if is_running {
+            prompt.push_str("  [S] Stop Job");
+        }
+        prompt.push_str("  [D] Delete");
+
+        io.println(&prompt);
+        io.print("Option: ");
+        io.flush();
+        let input = io.read_line().trim().to_string();
+
+        if input.eq_ignore_ascii_case("s") && is_running {
+            if let Some(job_id) = item.job_ref {
+                if job_manager.stop_job(job_id) {
+                     io.println(&format!("{}", "[*] Stop signal sent.".yellow()));
+                } else {
+                     io.println(&format!("{}", "[!] Failed to stop job.".red()));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        } else if input.eq_ignore_ascii_case("d") {
+             io.print(&format!("{}", "Are you sure you want to DELETE this item? (y/N): ".red().bold()));
+             io.flush();
+             let confirm = io.read_line();
+             if confirm.trim().eq_ignore_ascii_case("y") {
+                 if let Some(job_id) = item.job_ref {
+                     if job_manager.delete_job(job_id) {
+                         io.println(&format!("{}", "[*] Job deleted.".green()));
+                         std::thread::sleep(std::time::Duration::from_secs(1));
+                         return; // Return to list
+                     }
+                 } else if let Some(path) = &item.details_path {
+                     if let Err(e) = fs::remove_dir_all(path) {
+                         io.println(&format!("{} {}", "[!] Failed to delete files:".red(), e));
+                     } else {
+                         io.println(&format!("{}", "[*] Scan files deleted.".green()));
+                         std::thread::sleep(std::time::Duration::from_secs(1));
+                         return; // Return to list
+                     }
+                 }
+             }
+        } else if input.is_empty() {
+            break;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -256,7 +304,7 @@ mod tests {
         // Create 40 jobs
         // 40 jobs -> 20 items per page -> 2 pages
         for i in 0..40 {
-            job_manager.spawn_job(&format!("Job {}", i), |_, _| {}, executor.clone(), true);
+            job_manager.spawn_job(&format!("Job {}", i), |_, _, _| {}, executor.clone(), true);
         }
 
         // Sequence of inputs:

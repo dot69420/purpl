@@ -102,7 +102,13 @@ pub fn execute_poisoning(config: PoisonConfig, _use_proxy: bool, executor: &dyn 
     let (responder_cmd, responder_args) = build_responder_command("responder", &config.interface, &config.profile.flags, config.use_sudo);
     let responder_args_str: Vec<&str> = responder_args.iter().map(|s| s.as_str()).collect();
 
-    let status = executor.execute(&responder_cmd, &responder_args_str);
+    let status = executor.execute_streamed(
+        &responder_cmd, 
+        &responder_args_str, 
+        "", 
+        None, 
+        Box::new(|line| io.println(line))
+    );
 
     if Path::new("logs").exists() {
          let _ = fs::rename("logs", Path::new(&output_dir).join("logs"));

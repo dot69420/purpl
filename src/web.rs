@@ -2,30 +2,31 @@ use std::path::Path;
 use std::fs;
 use chrono::Local;
 use colored::*;
+use serde::{Deserialize, Serialize};
 use crate::history::{append_history, HistoryEntry};
 use crate::executor::CommandExecutor;
 use crate::io_handler::IoHandler;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebProfile {
     pub name: String,
     pub description: String,
     pub wordlist: String,
-    pub flags: Vec<&'static str>,
+    pub flags: Vec<String>,
 }
 
 impl WebProfile {
-    pub fn new(name: &str, description: &str, wordlist: &str, flags: &[&'static str]) -> Self {
+    pub fn new(name: &str, description: &str, wordlist: &str, flags: &[&str]) -> Self {
         Self {
             name: name.to_string(),
             description: description.to_string(),
             wordlist: wordlist.to_string(),
-            flags: flags.to_vec(),
+            flags: flags.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebConfig {
     pub target: String,
     pub profile: WebProfile,
@@ -167,7 +168,13 @@ pub fn execute_web_enum(config: WebConfig, use_proxy: bool, executor: &dyn Comma
     let (final_cmd, final_args) = build_gobuster_command("gobuster", &config.target, &config.profile.wordlist, &output_file, &flags_ref, use_proxy);
     let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
-    let status = executor.execute(&final_cmd, &final_args_str);
+    let status = executor.execute_streamed(
+        &final_cmd, 
+        &final_args_str, 
+        "", 
+        None, 
+        Box::new(|line| io.println(line))
+    );
 
     match status {
         Ok(s) => {

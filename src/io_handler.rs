@@ -1,7 +1,7 @@
 use std::io::{self, Write};
-use std::cell::RefCell;
+use std::sync::Mutex;
 
-pub trait IoHandler {
+pub trait IoHandler: Send + Sync {
     fn println(&self, msg: &str);
     fn print(&self, msg: &str);
     fn flush(&self);
@@ -49,34 +49,34 @@ impl IoHandler for RealIoHandler {
 }
 
 pub struct MockIoHandler {
-    pub output: RefCell<Vec<String>>,
-    pub input_queue: RefCell<Vec<String>>,
+    pub output: Mutex<Vec<String>>,
+    pub input_queue: Mutex<Vec<String>>,
 }
 
 impl MockIoHandler {
     pub fn new() -> Self {
         Self {
-            output: RefCell::new(Vec::new()),
-            input_queue: RefCell::new(Vec::new()),
+            output: Mutex::new(Vec::new()),
+            input_queue: Mutex::new(Vec::new()),
         }
     }
 
     pub fn add_input(&self, input: &str) {
-        self.input_queue.borrow_mut().push(input.to_string());
+        self.input_queue.lock().unwrap().push(input.to_string());
     }
 
     pub fn get_output(&self) -> String {
-        self.output.borrow().join("")
+        self.output.lock().unwrap().join("")
     }
 }
 
 impl IoHandler for MockIoHandler {
     fn println(&self, msg: &str) {
-        self.output.borrow_mut().push(format!("{}\n", msg));
+        self.output.lock().unwrap().push(format!("{}\n", msg));
     }
 
     fn print(&self, msg: &str) {
-        self.output.borrow_mut().push(msg.to_string());
+        self.output.lock().unwrap().push(msg.to_string());
     }
 
     fn flush(&self) {
@@ -84,8 +84,9 @@ impl IoHandler for MockIoHandler {
     }
 
     fn read_line(&self) -> String {
-        if !self.input_queue.borrow().is_empty() {
-            self.input_queue.borrow_mut().remove(0)
+        let mut queue = self.input_queue.lock().unwrap();
+        if !queue.is_empty() {
+            queue.remove(0)
         } else {
             String::new()
         }
@@ -109,7 +110,7 @@ impl IoHandler for MockIoHandler {
     }
 }
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct CapturingIoHandler {
