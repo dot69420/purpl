@@ -325,13 +325,25 @@ fn process_packet_block(block: &str, file: &mut File, io: &dyn IoHandler) {
     }
 }
 
-fn detect_protocol(flags: &str, payload: &str) -> String {
-    if payload.contains("HTTP/") || payload.contains("GET ") || payload.contains("POST ") {
+pub(crate) fn detect_protocol(flags: &str, payload: &str) -> String {
+    static RE_HTTP: OnceLock<Regex> = OnceLock::new();
+    let re_http = RE_HTTP.get_or_init(|| {
+        Regex::new(r"HTTP/|GET |POST ").expect("Invalid HTTP regex")
+    });
+
+    if re_http.is_match(payload) {
         return "HTTP (Unencrypted)".to_string();
     }
-    if payload.contains("USER ") || payload.contains("PASS ") {
+
+    static RE_CRED: OnceLock<Regex> = OnceLock::new();
+    let re_cred = RE_CRED.get_or_init(|| {
+        Regex::new(r"USER |PASS ").expect("Invalid CRED regex")
+    });
+
+    if re_cred.is_match(payload) {
         return "FTP/Telnet (Credentials)".to_string();
     }
+
     if flags.contains("UDP") || flags.contains("domain") {
         return "DNS".to_string();
     }
