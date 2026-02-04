@@ -1,9 +1,9 @@
-use std::fs;
+use crate::executor::CommandExecutor;
+use crate::history::{HistoryEntry, append_history};
+use crate::io_handler::IoHandler;
 use chrono::Local;
 use colored::*;
-use crate::history::{append_history, HistoryEntry};
-use crate::executor::CommandExecutor;
-use crate::io_handler::IoHandler;
+use std::fs;
 
 #[derive(Debug, Clone)]
 pub struct BtProfile {
@@ -15,7 +15,13 @@ pub struct BtProfile {
 }
 
 impl BtProfile {
-    pub fn new(name: &str, description: &str, cmd: &'static str, args: &[&'static str], requires_input: bool) -> Self {
+    pub fn new(
+        name: &str,
+        description: &str,
+        cmd: &'static str,
+        args: &[&'static str],
+        requires_input: bool,
+    ) -> Self {
         Self {
             name: name.to_string(),
             description: description.to_string(),
@@ -33,15 +39,28 @@ pub struct BluetoothConfig {
     pub use_sudo: bool,
 }
 
-pub fn configure_bluetooth(input_arg: &str, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<BluetoothConfig> {
+pub fn configure_bluetooth(
+    input_arg: &str,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) -> Option<BluetoothConfig> {
     // 1. Check Dependencies (bluetoothctl is the modern standard)
-    if executor.execute_output("bluetoothctl", &["--version"]).is_err() {
-        io.println(&format!("{}", "[-] 'bluetoothctl' not found. Please install 'bluez-utils'.".red()));
+    if executor
+        .execute_output("bluetoothctl", &["--version"])
+        .is_err()
+    {
+        io.println(&format!(
+            "{}",
+            "[-] 'bluetoothctl' not found. Please install 'bluez-utils'.".red()
+        ));
         return None;
     }
 
     // 2. Check/Reset Adapter
-    io.println(&format!("{}", "[*] Checking Bluetooth Adapter status...".blue()));
+    io.println(&format!(
+        "{}",
+        "[*] Checking Bluetooth Adapter status...".blue()
+    ));
     let _ = executor.execute_output("rfkill", &["unblock", "bluetooth"]);
     let _ = executor.execute_output("bluetoothctl", &["power", "on"]);
 
@@ -52,28 +71,33 @@ pub fn configure_bluetooth(input_arg: &str, executor: &dyn CommandExecutor, io: 
             "Discover visible Bluetooth devices (Classic & LE).",
             "bluetoothctl",
             &["--timeout", "10", "scan", "on"],
-            false
+            false,
         ),
         BtProfile::new(
             "Service Discovery",
             "Enumerate services on a target MAC (bluetoothctl info).",
             "bluetoothctl",
             &["info"],
-            true
+            true,
         ),
         BtProfile::new(
             "Ping Flood (Stress)",
             "L2CAP Ping Flood. Can disconnect/drain battery. (l2ping -f) - Requires Root.",
             "l2ping",
             &["-f"],
-            true
+            true,
         ),
     ];
 
     // 4. Select Profile
     io.println(&format!("\n{}", "Select Bluetooth Module:".blue().bold()));
     for (i, p) in profiles.iter().enumerate() {
-        io.println(&format!("[{}] {} - {}", i + 1, p.name.green(), p.description));
+        io.println(&format!(
+            "[{}] {} - {}",
+            i + 1,
+            p.name.green(),
+            p.description
+        ));
     }
 
     io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
@@ -93,21 +117,27 @@ pub fn configure_bluetooth(input_arg: &str, executor: &dyn CommandExecutor, io: 
     // Special Check for Deprecated Tools
     if profile.cmd == "l2ping" {
         if executor.execute_output("l2ping", &[]).is_err() {
-             io.println(&format!("{}", "[-] 'l2ping' not found. This tool is deprecated and might be missing from modern 'bluez-utils'.\n    Try installing 'bluez-deprecated-tools' or equivalent.".red()));
-             return None;
+            io.println(&format!("{}", "[-] 'l2ping' not found. This tool is deprecated and might be missing from modern 'bluez-utils'.\n    Try installing 'bluez-deprecated-tools' or equivalent.".red()));
+            return None;
         }
     }
 
     // 5. Handle Input (MAC Address)
     let mut target_mac = input_arg.to_string();
     if profile.requires_input && target_mac.is_empty() {
-        io.print(&format!("{}", "Enter Target MAC Address (XX:XX:XX:XX:XX:XX): ".yellow()));
+        io.print(&format!(
+            "{}",
+            "Enter Target MAC Address (XX:XX:XX:XX:XX:XX): ".yellow()
+        ));
         io.flush();
         let mac = io.read_line();
         target_mac = mac.trim().to_string();
-        
+
         if target_mac.is_empty() {
-            io.println(&format!("{}", "[!] Target MAC is required for this profile.".red()));
+            io.println(&format!(
+                "{}",
+                "[!] Target MAC is required for this profile.".red()
+            ));
             return None;
         }
     }
@@ -116,14 +146,14 @@ pub fn configure_bluetooth(input_arg: &str, executor: &dyn CommandExecutor, io: 
     let mut use_sudo = false;
     if profile.name.contains("Stress") {
         if !executor.is_root() {
-             match crate::ui::ask_and_enable_sudo(executor, io, Some("This profile")) {
-                 Ok(true) => use_sudo = true,
-                 Ok(false) => {
-                     io.println(&format!("{}", "[-] Root required. Exiting.".red()));
-                     return None;
-                 },
-                 Err(_) => return None,
-             }
+            match crate::ui::ask_and_enable_sudo(executor, io, Some("This profile")) {
+                Ok(true) => use_sudo = true,
+                Ok(false) => {
+                    io.println(&format!("{}", "[-] Root required. Exiting.".red()));
+                    return None;
+                }
+                Err(_) => return None,
+            }
         }
     }
 
@@ -134,18 +164,32 @@ pub fn configure_bluetooth(input_arg: &str, executor: &dyn CommandExecutor, io: 
     })
 }
 
-pub fn execute_bluetooth(config: BluetoothConfig, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn execute_bluetooth(
+    config: BluetoothConfig,
+    _use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     // 6. Setup Output
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let output_dir = format!("scans/bluetooth/{}", date);
     fs::create_dir_all(&output_dir).expect("Failed to create output dir");
     let output_file = format!("{}/scan.txt", output_dir);
 
-    io.println(&format!("{}", format!("\n[+] Starting {}...", config.profile.name).green()));
+    io.println(&format!(
+        "{}",
+        format!("\n[+] Starting {}...", config.profile.name).green()
+    ));
     io.println(&format!("[+] Saving output to: {}", output_file));
 
     // 7. Execute
-    let (cmd_bin, args) = build_bluetooth_command(config.profile.cmd, &config.profile.args, &config.target_mac, config.profile.requires_input, config.use_sudo);
+    let (cmd_bin, args) = build_bluetooth_command(
+        config.profile.cmd,
+        &config.profile.args,
+        &config.target_mac,
+        config.profile.requires_input,
+        config.use_sudo,
+    );
     let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
     // Special handling for bluetoothctl scan to parse it nicely
@@ -153,28 +197,36 @@ pub fn execute_bluetooth(config: BluetoothConfig, _use_proxy: bool, executor: &d
         io.println("Scanning for 10 seconds...");
         // 1. Run Scan to populate cache (ignore output)
         let _ = executor.execute_output(&cmd_bin, &args_str);
-        
+
         // Sleep briefly to ensure cache persistence/DBus sync
         #[cfg(not(test))]
         std::thread::sleep(std::time::Duration::from_secs(2));
 
         // 2. Run 'devices' to get the clean list
-        let devices_output = executor.execute_output("bluetoothctl", &["devices"]).expect("Failed to list devices");
+        let devices_output = executor
+            .execute_output("bluetoothctl", &["devices"])
+            .expect("Failed to list devices");
         let stdout = String::from_utf8_lossy(&devices_output.stdout);
-        
+
         // Write raw to file
         let _ = fs::write(&output_file, stdout.as_bytes());
-        
+
         if stdout.trim().is_empty() {
-            io.println(&format!("{}", "[-] No devices found or 'bluetoothctl devices' returned empty.".yellow()));
+            io.println(&format!(
+                "{}",
+                "[-] No devices found or 'bluetoothctl devices' returned empty.".yellow()
+            ));
             // Debug info
             io.println(&format!("DEBUG: Exit Status: {}", devices_output.status));
-            io.println(&format!("DEBUG: Stderr: {}", String::from_utf8_lossy(&devices_output.stderr)));
+            io.println(&format!(
+                "DEBUG: Stderr: {}",
+                String::from_utf8_lossy(&devices_output.stderr)
+            ));
         } else {
             // Print nicely
             io.println(&format!("{}", "\nDiscovered Devices:".blue().bold()));
             // bluetoothctl devices output: Device XX:XX:XX:XX:XX:XX Name...
-            for line in stdout.lines() { 
+            for line in stdout.lines() {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 3 && parts[0] == "Device" {
                     let mac = parts[1];
@@ -185,19 +237,24 @@ pub fn execute_bluetooth(config: BluetoothConfig, _use_proxy: bool, executor: &d
         }
     } else if config.profile.cmd == "l2ping" {
         // Safe execution for infinite stream/flood
-        io.println(&format!("{}", "[-] Running in interactive/stream mode. Press Ctrl+C to stop.".yellow()));
+        io.println(&format!(
+            "{}",
+            "[-] Running in interactive/stream mode. Press Ctrl+C to stop.".yellow()
+        ));
         let status = executor.execute(&cmd_bin, &args_str);
-        
+
         if status.is_err() {
             io.println(&format!("{}", "[-] Execution failed.".red()));
         } else {
-             io.println(&format!("{}", "\n[+] Command finished.".green()));
+            io.println(&format!("{}", "\n[+] Command finished.".green()));
         }
         // We don't write output to file for l2ping flood as it's massive/infinite.
         let _ = fs::write(&output_file, "Flood ping executed interactively/streamed.");
     } else {
         // Stream other commands
-        let output = executor.execute_output(&cmd_bin, &args_str).expect("Failed to run command");
+        let output = executor
+            .execute_output(&cmd_bin, &args_str)
+            .expect("Failed to run command");
         // Write stdout to file
         let _ = fs::write(&output_file, output.stdout);
 
@@ -205,11 +262,20 @@ pub fn execute_bluetooth(config: BluetoothConfig, _use_proxy: bool, executor: &d
         io.println(&format!("Check {} for results.", output_file));
     }
 
-    let _ = append_history(&HistoryEntry::new("Bluetooth", &config.profile.name, "Executed"));
+    let _ = append_history(&HistoryEntry::new(
+        "Bluetooth",
+        &config.profile.name,
+        "Executed",
+    ));
 }
 
 // Wrapper
-pub fn run_bluetooth_attacks(input_arg: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn run_bluetooth_attacks(
+    input_arg: &str,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     if let Some(config) = configure_bluetooth(input_arg, executor, io) {
         execute_bluetooth(config, use_proxy, executor, io);
     }
@@ -220,19 +286,19 @@ pub fn build_bluetooth_command(
     args: &[&str],
     target_mac: &str,
     requires_input: bool,
-    use_sudo: bool
+    use_sudo: bool,
 ) -> (String, Vec<String>) {
     let mut cmd_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     if requires_input && !target_mac.is_empty() {
         cmd_args.push(target_mac.to_string());
     }
-    
+
     let mut final_cmd = base_cmd.to_string();
     if use_sudo {
         cmd_args.insert(0, final_cmd);
         final_cmd = "sudo".to_string();
     }
-    
+
     (final_cmd, cmd_args)
 }
 

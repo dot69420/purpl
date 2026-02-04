@@ -1,9 +1,9 @@
+use crate::io_handler::IoHandler;
+use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::Path;
-use chrono::{DateTime, Local};
-use crate::io_handler::IoHandler;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HistoryEntry {
@@ -32,7 +32,7 @@ pub fn append_history(entry: &HistoryEntry) -> io::Result<()> {
 pub fn append_history_to_file(entry: &HistoryEntry, file_path: &str) -> io::Result<()> {
     let mut history = load_history_from_file(file_path)?;
     history.push(entry.clone());
-    
+
     let json = serde_json::to_string_pretty(&history)?;
     let mut file = OpenOptions::new()
         .write(true)
@@ -51,11 +51,11 @@ pub fn load_history_from_file(file_path: &str) -> io::Result<Vec<HistoryEntry>> 
     if !Path::new(file_path).exists() {
         return Ok(Vec::new());
     }
-    
+
     let mut file = fs::File::open(file_path)?;
     let mut content = String::new();
     file.read_to_string(&mut content)?;
-    
+
     if content.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -72,11 +72,17 @@ pub fn print_history(io: &dyn IoHandler) {
         io.println("No history found.");
         return;
     }
-    
-    io.println(&format!("{:<20} | {:<10} | {:<20} | {:<10}", "Timestamp", "Mode", "Target", "Status"));
+
+    io.println(&format!(
+        "{:<20} | {:<10} | {:<20} | {:<10}",
+        "Timestamp", "Mode", "Target", "Status"
+    ));
     io.println(&"-".repeat(70));
     for entry in history {
-        io.println(&format!("{:<20} | {:<10} | {:<20} | {:<10}", entry.timestamp, entry.mode, entry.target, entry.status));
+        io.println(&format!(
+            "{:<20} | {:<10} | {:<20} | {:<10}",
+            entry.timestamp, entry.mode, entry.target, entry.status
+        ));
     }
 }
 
@@ -93,20 +99,24 @@ pub fn get_last_target() -> Option<String> {
     }
     match fs::read_to_string(path) {
         Ok(content) => {
-             if let Ok(data) = serde_json::from_str::<LastTarget>(&content) {
-                 if !data.target.is_empty() {
-                     return Some(data.target);
-                 }
-             }
-             None
-        },
+            if let Ok(data) = serde_json::from_str::<LastTarget>(&content) {
+                if !data.target.is_empty() {
+                    return Some(data.target);
+                }
+            }
+            None
+        }
         Err(_) => None,
     }
 }
 
 pub fn save_last_target(target: &str) {
-    if target.trim().is_empty() { return; }
-    let data = LastTarget { target: target.to_string() };
+    if target.trim().is_empty() {
+        return;
+    }
+    let data = LastTarget {
+        target: target.to_string(),
+    };
     if let Ok(json) = serde_json::to_string(&data) {
         let _ = fs::write("last_target.json", json);
     }

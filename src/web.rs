@@ -1,11 +1,11 @@
-use std::path::Path;
-use std::fs;
+use crate::executor::CommandExecutor;
+use crate::history::{HistoryEntry, append_history};
+use crate::io_handler::IoHandler;
 use chrono::Local;
 use colored::*;
 use serde::{Deserialize, Serialize};
-use crate::history::{append_history, HistoryEntry};
-use crate::executor::CommandExecutor;
-use crate::io_handler::IoHandler;
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebProfile {
@@ -43,16 +43,27 @@ fn find_wordlist(candidates: &[&str]) -> Option<String> {
     None
 }
 
-pub fn configure_web_enum(target: &str, extra_args: Option<&str>, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<WebConfig> {
+pub fn configure_web_enum(
+    target: &str,
+    extra_args: Option<&str>,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) -> Option<WebConfig> {
     // 1. Validation
     if !target.starts_with("http://") && !target.starts_with("https://") {
-        io.println(&format!("{}", "[!] Target must start with http:// or https://".red()));
+        io.println(&format!(
+            "{}",
+            "[!] Target must start with http:// or https://".red()
+        ));
         return None;
     }
 
     // Check gobuster availability
     if executor.execute_output("gobuster", &["version"]).is_err() {
-        io.println(&format!("{}", "[-] 'gobuster' not found. Please install it (sudo pacman -S gobuster).".red()));
+        io.println(&format!(
+            "{}",
+            "[-] 'gobuster' not found. Please install it (sudo pacman -S gobuster).".red()
+        ));
         return None;
     }
 
@@ -61,26 +72,28 @@ pub fn configure_web_enum(target: &str, extra_args: Option<&str>, executor: &dyn
         "/usr/share/wordlists/dirb/common.txt",
         "/usr/share/seclists/Discovery/Web-Content/common.txt",
         "/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt",
-        "wordlists/common.txt" // Local fallback
-    ]).unwrap_or_else(|| "manual".to_string());
+        "wordlists/common.txt", // Local fallback
+    ])
+    .unwrap_or_else(|| "manual".to_string());
 
     let medium_list = find_wordlist(&[
         "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
         "/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt",
         "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
-        "wordlists/medium.txt"
-    ]).unwrap_or_else(|| "manual".to_string());
+        "wordlists/medium.txt",
+    ])
+    .unwrap_or_else(|| "manual".to_string());
 
     // 3. Define Profiles
     let mut profiles = Vec::new();
-    
+
     // Quick Profile
     if common_list != "manual" {
         profiles.push(WebProfile::new(
             "Quick Scan",
             "Scans for common files and directories (common.txt).",
             &common_list,
-            &["-t", "50", "--no-error"]
+            &["-t", "50", "--no-error"],
         ));
     }
 
@@ -90,7 +103,7 @@ pub fn configure_web_enum(target: &str, extra_args: Option<&str>, executor: &dyn
             "Deep Scan",
             "Large wordlist, slower but thorough.",
             &medium_list,
-            &["-t", "40", "--no-error", "-x", "php,html,txt"]
+            &["-t", "40", "--no-error", "-x", "php,html,txt"],
         ));
     }
 
@@ -99,13 +112,21 @@ pub fn configure_web_enum(target: &str, extra_args: Option<&str>, executor: &dyn
         "Manual/Custom",
         "Select your own wordlist.",
         "manual",
-        &["-t", "50"]
+        &["-t", "50"],
     ));
 
     // 4. Select Profile
-    io.println(&format!("\n{}", "Select Web Enumeration Profile:".blue().bold()));
+    io.println(&format!(
+        "\n{}",
+        "Select Web Enumeration Profile:".blue().bold()
+    ));
     for (i, p) in profiles.iter().enumerate() {
-        io.println(&format!("[{}] {} - {}", i + 1, p.name.green(), p.description));
+        io.println(&format!(
+            "[{}] {} - {}",
+            i + 1,
+            p.name.green(),
+            p.description
+        ));
     }
 
     io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
@@ -143,7 +164,12 @@ pub fn configure_web_enum(target: &str, extra_args: Option<&str>, executor: &dyn
     })
 }
 
-pub fn execute_web_enum(config: WebConfig, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn execute_web_enum(
+    config: WebConfig,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     // 5. Setup Output
     let safe_target = config.target.replace("://", "_").replace('/', "_");
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -151,29 +177,39 @@ pub fn execute_web_enum(config: WebConfig, use_proxy: bool, executor: &dyn Comma
     fs::create_dir_all(&output_dir).expect("Failed to create output dir");
     let output_file = format!("{}/gobuster.txt", output_dir);
 
-    io.println(&format!("{}", format!("\n[+] Starting Gobuster on {}", config.target).green()));
+    io.println(&format!(
+        "{}",
+        format!("\n[+] Starting Gobuster on {}", config.target).green()
+    ));
     io.println(&format!("    Wordlist: {}", config.profile.wordlist));
     io.println(&format!("[+] Saving output to: {}", output_file));
 
     // 6. Execute
     let mut flags_vec: Vec<String> = config.profile.flags.iter().map(|s| s.to_string()).collect();
     if let Some(extras) = &config.extra_args {
-         for arg in extras.split_whitespace() {
-             flags_vec.push(arg.to_string());
-         }
+        for arg in extras.split_whitespace() {
+            flags_vec.push(arg.to_string());
+        }
     }
-    
+
     let flags_ref: Vec<&str> = flags_vec.iter().map(|s| s.as_str()).collect();
 
-    let (final_cmd, final_args) = build_gobuster_command("gobuster", &config.target, &config.profile.wordlist, &output_file, &flags_ref, use_proxy);
+    let (final_cmd, final_args) = build_gobuster_command(
+        "gobuster",
+        &config.target,
+        &config.profile.wordlist,
+        &output_file,
+        &flags_ref,
+        use_proxy,
+    );
     let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
     let status = executor.execute_streamed(
-        &final_cmd, 
-        &final_args_str, 
-        "", 
-        None, 
-        Box::new(|line| io.println(line))
+        &final_cmd,
+        &final_args_str,
+        "",
+        None,
+        Box::new(|line| io.println(line)),
     );
 
     match status {
@@ -182,16 +218,29 @@ pub fn execute_web_enum(config: WebConfig, use_proxy: bool, executor: &dyn Comma
                 io.println(&format!("{}", "\n[+] Enumeration complete.".green()));
                 let _ = append_history(&HistoryEntry::new("WebEnum", &config.target, "Success"));
             } else {
-                io.println(&format!("{}", "\n[!] Gobuster failed or was interrupted.".yellow()));
-                let _ = append_history(&HistoryEntry::new("WebEnum", &config.target, "Failed/Stopped"));
+                io.println(&format!(
+                    "{}",
+                    "\n[!] Gobuster failed or was interrupted.".yellow()
+                ));
+                let _ = append_history(&HistoryEntry::new(
+                    "WebEnum",
+                    &config.target,
+                    "Failed/Stopped",
+                ));
             }
-        },
+        }
         Err(e) => io.println(&format!("{} {}", "[!] Failed to start process:".red(), e)),
     }
 }
 
 // Backward compatibility wrapper
-pub fn run_web_enum(target: &str, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn run_web_enum(
+    target: &str,
+    extra_args: Option<&str>,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     if let Some(config) = configure_web_enum(target, extra_args, executor, io) {
         execute_web_enum(config, use_proxy, executor, io);
     }
@@ -203,9 +252,17 @@ pub fn build_gobuster_command(
     wordlist: &str,
     output_file: &str,
     flags: &[&str],
-    use_proxy: bool
+    use_proxy: bool,
 ) -> (String, Vec<String>) {
-    let mut args = vec!["dir".to_string(), "-u".to_string(), target.to_string(), "-w".to_string(), wordlist.to_string(), "-o".to_string(), output_file.to_string()];
+    let mut args = vec![
+        "dir".to_string(),
+        "-u".to_string(),
+        target.to_string(),
+        "-w".to_string(),
+        wordlist.to_string(),
+        "-o".to_string(),
+        output_file.to_string(),
+    ];
     args.extend(flags.iter().map(|s| s.to_string()));
 
     let mut final_cmd = base_cmd.to_string();

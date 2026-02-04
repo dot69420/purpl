@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::report::{parse_nmap_xml, parse_wifite_json, display_scan_report};
     use crate::io_handler::MockIoHandler;
+    use crate::report::{display_scan_report, parse_nmap_xml, parse_wifite_json};
     use std::fs;
     use std::path::Path;
 
@@ -89,7 +89,13 @@ mod tests {
     fn test_display_scan_report() {
         let io = MockIoHandler::new();
         // Setup dummy directory
-        let scan_dir_name = format!("dummy_scan_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+        let scan_dir_name = format!(
+            "dummy_scan_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
         let scan_dir = Path::new(&scan_dir_name);
         fs::create_dir_all(scan_dir).unwrap();
 

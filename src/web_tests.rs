@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::web::{run_web_enum, build_gobuster_command, WebProfile};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
-
+    use crate::web::{WebProfile, build_gobuster_command, run_web_enum};
 
     #[test]
     fn test_run_web_enum_logic() {
@@ -31,7 +30,14 @@ mod tests {
     #[test]
     fn test_build_gobuster_command_basic() {
         let flags = vec!["-t", "50"];
-        let (cmd, args) = build_gobuster_command("gobuster", "http://test.com", "wordlist.txt", "out.txt", &flags, false);
+        let (cmd, args) = build_gobuster_command(
+            "gobuster",
+            "http://test.com",
+            "wordlist.txt",
+            "out.txt",
+            &flags,
+            false,
+        );
 
         assert_eq!(cmd, "gobuster");
         // dir -u <url> -w <wordlist> -o <out> <flags>
@@ -44,7 +50,14 @@ mod tests {
     #[test]
     fn test_build_gobuster_command_proxy() {
         let flags = vec!["-t", "50"];
-        let (cmd, args) = build_gobuster_command("gobuster", "http://test.com", "wordlist.txt", "out.txt", &flags, true);
+        let (cmd, args) = build_gobuster_command(
+            "gobuster",
+            "http://test.com",
+            "wordlist.txt",
+            "out.txt",
+            &flags,
+            true,
+        );
 
         assert_eq!(cmd, "proxychains");
         assert_eq!(args[0], "gobuster");

@@ -1,10 +1,10 @@
+use crate::io_handler::IoHandler;
+use crate::job_manager::{JobManager, JobStatus};
+use crate::report::display_scan_report;
+use colored::*;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use colored::*;
-use crate::job_manager::{JobManager, JobStatus};
-use crate::io_handler::IoHandler;
-use crate::report::display_scan_report;
 
 #[derive(Debug, Clone)]
 pub struct DashboardItem {
@@ -15,7 +15,7 @@ pub struct DashboardItem {
     pub target: String,
     pub status: String,
     pub details_path: Option<PathBuf>, // For file-based
-    pub job_ref: Option<usize>, // For memory-based job ID
+    pub job_ref: Option<usize>,        // For memory-based job ID
 }
 
 pub fn show_dashboard(job_manager: &Arc<JobManager>, io: &dyn IoHandler) {
@@ -49,9 +49,9 @@ pub fn show_dashboard(job_manager: &Arc<JobManager>, io: &dyn IoHandler) {
         io.println(&options);
         io.print("Select option: ");
         io.flush();
-        
+
         let input = io.read_line().trim().to_string();
-        
+
         if input == "0" {
             break;
         } else if input.eq_ignore_ascii_case("r") || input.is_empty() {
@@ -95,7 +95,7 @@ fn collect_items(job_manager: &Arc<JobManager>) -> Vec<DashboardItem> {
             JobStatus::Failed => "FAILED".red().bold().to_string(),
             JobStatus::Stopped => "STOPPED".dimmed().bold().to_string(),
         };
-        
+
         // Parse name for Tool and Target (Format: "Tool Target")
         let parts: Vec<&str> = job.name.splitn(2, ' ').collect();
         let tool = parts.get(0).unwrap_or(&"Unknown").to_string();
@@ -118,26 +118,39 @@ fn collect_items(job_manager: &Arc<JobManager>) -> Vec<DashboardItem> {
     if let Ok(tools_dir) = fs::read_dir("scans") {
         for tool_entry in tools_dir.flatten() {
             if let Ok(ft) = tool_entry.file_type() {
-                if !ft.is_dir() { continue; }
+                if !ft.is_dir() {
+                    continue;
+                }
                 let tool_name = tool_entry.file_name().to_string_lossy().to_string();
-                
+
                 // Targets
                 if let Ok(targets_dir) = fs::read_dir(tool_entry.path()) {
                     for target_entry in targets_dir.flatten() {
-                        if !target_entry.path().is_dir() { continue; }
+                        if !target_entry.path().is_dir() {
+                            continue;
+                        }
                         let target_name = target_entry.file_name().to_string_lossy().to_string();
 
                         // Dates
                         if let Ok(dates_dir) = fs::read_dir(target_entry.path()) {
                             for date_entry in dates_dir.flatten() {
-                                if !date_entry.path().is_dir() { continue; }
-                                let date_name = date_entry.file_name().to_string_lossy().to_string(); // Format: YYYYMMDD_HHMMSS
-                                
+                                if !date_entry.path().is_dir() {
+                                    continue;
+                                }
+                                let date_name =
+                                    date_entry.file_name().to_string_lossy().to_string(); // Format: YYYYMMDD_HHMMSS
+
                                 // Format timestamp nicely: YYYY-MM-DD HH:MM:SS
                                 let formatted_time = if date_name.len() == 15 {
-                                    format!("{}-{}-{} {}:{}:{}", 
-                                        &date_name[0..4], &date_name[4..6], &date_name[6..8],
-                                        &date_name[9..11], &date_name[11..13], &date_name[13..15])
+                                    format!(
+                                        "{}-{}-{} {}:{}:{}",
+                                        &date_name[0..4],
+                                        &date_name[4..6],
+                                        &date_name[6..8],
+                                        &date_name[9..11],
+                                        &date_name[11..13],
+                                        &date_name[13..15]
+                                    )
                                 } else {
                                     date_name.clone()
                                 };
@@ -172,7 +185,7 @@ fn collect_items(job_manager: &Arc<JobManager>) -> Vec<DashboardItem> {
 fn display_list(items: &[DashboardItem], io: &dyn IoHandler, page: usize, page_size: usize) {
     crate::ui::clear_screen();
     crate::ui::print_header(io, "PURPL CLI", Some("Task & Result Dashboard"));
-    
+
     if items.is_empty() {
         io.println("\nNo jobs or history found.");
         return;
@@ -183,11 +196,18 @@ fn display_list(items: &[DashboardItem], io: &dyn IoHandler, page: usize, page_s
     let start_index = page * page_size;
     let end_index = std::cmp::min(start_index + page_size, total_items);
 
-    io.println(&format!("Page {}/{} (Total: {})", page + 1, total_pages, total_items));
+    io.println(&format!(
+        "Page {}/{} (Total: {})",
+        page + 1,
+        total_pages,
+        total_items
+    ));
 
     // Header
-    io.println(&format!("{:<6} | {:<20} | {:<12} | {:<25} | {:<15}", 
-        "ID", "TIMESTAMP", "TOOL", "TARGET", "STATUS"));
+    io.println(&format!(
+        "{:<6} | {:<20} | {:<12} | {:<25} | {:<15}",
+        "ID", "TIMESTAMP", "TOOL", "TARGET", "STATUS"
+    ));
     io.println(&"-".repeat(90));
 
     // Rows
@@ -200,7 +220,8 @@ fn display_list(items: &[DashboardItem], io: &dyn IoHandler, page: usize, page_s
                 item.target.clone()
             };
 
-            io.println(&format!("{:<6} | {:<20} | {:<12} | {:<25} | {:<15}",
+            io.println(&format!(
+                "{:<6} | {:<20} | {:<12} | {:<25} | {:<15}",
                 item.id.white().bold(),
                 item.timestamp,
                 item.tool_type.cyan(),
@@ -254,33 +275,38 @@ fn view_item_details(item: &DashboardItem, job_manager: &Arc<JobManager>, io: &d
         if input.eq_ignore_ascii_case("s") && is_running {
             if let Some(job_id) = item.job_ref {
                 if job_manager.stop_job(job_id) {
-                     io.println(&format!("{}", "[*] Stop signal sent.".yellow()));
+                    io.println(&format!("{}", "[*] Stop signal sent.".yellow()));
                 } else {
-                     io.println(&format!("{}", "[!] Failed to stop job.".red()));
+                    io.println(&format!("{}", "[!] Failed to stop job.".red()));
                 }
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
         } else if input.eq_ignore_ascii_case("d") {
-             io.print(&format!("{}", "Are you sure you want to DELETE this item? (y/N): ".red().bold()));
-             io.flush();
-             let confirm = io.read_line();
-             if confirm.trim().eq_ignore_ascii_case("y") {
-                 if let Some(job_id) = item.job_ref {
-                     if job_manager.delete_job(job_id) {
-                         io.println(&format!("{}", "[*] Job deleted.".green()));
-                         std::thread::sleep(std::time::Duration::from_secs(1));
-                         return; // Return to list
-                     }
-                 } else if let Some(path) = &item.details_path {
-                     if let Err(e) = fs::remove_dir_all(path) {
-                         io.println(&format!("{} {}", "[!] Failed to delete files:".red(), e));
-                     } else {
-                         io.println(&format!("{}", "[*] Scan files deleted.".green()));
-                         std::thread::sleep(std::time::Duration::from_secs(1));
-                         return; // Return to list
-                     }
-                 }
-             }
+            io.print(&format!(
+                "{}",
+                "Are you sure you want to DELETE this item? (y/N): "
+                    .red()
+                    .bold()
+            ));
+            io.flush();
+            let confirm = io.read_line();
+            if confirm.trim().eq_ignore_ascii_case("y") {
+                if let Some(job_id) = item.job_ref {
+                    if job_manager.delete_job(job_id) {
+                        io.println(&format!("{}", "[*] Job deleted.".green()));
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        return; // Return to list
+                    }
+                } else if let Some(path) = &item.details_path {
+                    if let Err(e) = fs::remove_dir_all(path) {
+                        io.println(&format!("{} {}", "[!] Failed to delete files:".red(), e));
+                    } else {
+                        io.println(&format!("{}", "[*] Scan files deleted.".green()));
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        return; // Return to list
+                    }
+                }
+            }
         } else if input.is_empty() {
             break;
         }
@@ -290,10 +316,10 @@ fn view_item_details(item: &DashboardItem, job_manager: &Arc<JobManager>, io: &d
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io_handler::MockIoHandler;
     use crate::executor::MockExecutor;
-    use std::sync::Arc;
+    use crate::io_handler::MockIoHandler;
     use crate::job_manager::JobManager;
+    use std::sync::Arc;
 
     #[test]
     fn test_dashboard_pagination() {

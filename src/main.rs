@@ -1,38 +1,40 @@
-mod history;
-mod nmap;
-mod wifi;
-mod report;
-mod sniffer;
-mod web;
-mod brute;
-mod exploit;
-mod search_exploit;
-mod poison;
-mod bluetooth;
-mod fuzzer;
 mod api;
-mod validation;
+mod bluetooth;
+mod brute;
+pub mod dashboard;
 pub mod executor;
+mod exploit;
+mod fuzzer;
+mod history;
+pub mod input_provider;
 pub mod io_handler;
 pub mod job_manager;
-pub mod dashboard;
-pub mod ui;
+mod nmap;
+mod poison;
+mod report;
+mod search_exploit;
+mod sniffer;
 pub mod tool_model;
-pub mod input_provider;
+pub mod ui;
+mod validation;
+mod web;
+mod wifi;
 
 use clap::{Parser, Subcommand};
-use std::sync::Arc;
 use std::fs;
+use std::sync::Arc;
 
 use colored::*;
 
+use executor::{CommandExecutor, HybridExecutor, ShellExecutor};
 use history::print_history;
-use executor::{CommandExecutor, ShellExecutor, HybridExecutor};
+use input_provider::{CliInputProvider, InputProvider};
 use io_handler::{IoHandler, RealIoHandler};
-use job_manager::{JobManager, Job};
+use job_manager::{Job, JobManager};
+use tool_model::{
+    MenuCategory, SpecializedStrategy, Tool, ToolImplementation, ToolInput, ToolSpecification,
+};
 use ui::clear_screen;
-use tool_model::{Tool, ToolImplementation, SpecializedStrategy, MenuCategory, ToolSpecification, ToolInput};
-use input_provider::{InputProvider, CliInputProvider};
 
 #[derive(Parser, Debug)]
 #[command(name = "purpl")]
@@ -151,11 +153,19 @@ pub enum Commands {
 #[path = "main_tests.rs"]
 mod tests;
 
-pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Arc<JobManager>) {
+pub fn run_interactive_mode(
+    mut use_proxy: bool,
+    executor: Arc<dyn CommandExecutor + Send + Sync>,
+    io: &dyn IoHandler,
+    job_manager: Arc<JobManager>,
+) {
     let main_menu = vec![
         Tool::category("Network Recon (Nmap & Discovery)", MenuCategory::Recon),
         Tool::category("Web Arsenal (Gobuster, Ffuf)", MenuCategory::Web),
-        Tool::category("Exploitation Hub (Search, Active, Hydra)", MenuCategory::Exploit),
+        Tool::category(
+            "Exploitation Hub (Search, Active, Hydra)",
+            MenuCategory::Exploit,
+        ),
         Tool::category("Network Operations (Sniffer, Poison)", MenuCategory::NetOps),
         Tool::category("Wireless & RF (WiFi, Bluetooth)", MenuCategory::Wireless),
         Tool::category("Custom Toolbox (User Defined)", MenuCategory::UserTools),
@@ -164,14 +174,18 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecut
     let input_provider = CliInputProvider::new(io);
 
     loop {
-        let menu_items: Vec<ui::MenuItem<&Tool>> = main_menu.iter()
+        let menu_items: Vec<ui::MenuItem<&Tool>> = main_menu
+            .iter()
             .map(|t| ui::MenuItem::new(&t.name, t))
             .collect();
 
         let proxy_status = if use_proxy { "ON".green() } else { "OFF".red() };
-        let proxy_label = format!("Toggle Proxychains [{}]
-", proxy_status);
-        
+        let proxy_label = format!(
+            "Toggle Proxychains [{}]
+",
+            proxy_status
+        );
+
         let extras = vec![
             ("Dashboard (Results & History)", "D"),
             (proxy_label.as_str(), "P"),
@@ -181,18 +195,23 @@ pub fn run_interactive_mode(mut use_proxy: bool, executor: Arc<dyn CommandExecut
         match ui::show_menu_loop(io, "Main Menu", &menu_items, &extras, true) {
             ui::MenuResult::Item(idx) => {
                 let tool = &main_menu[idx];
-                run_tool_dispatch(tool, use_proxy, executor.clone(), io, Some(job_manager.clone()), &input_provider);
-            },
-            ui::MenuResult::Extra(key) => {
-                match key.as_str() {
-                    "D" => dashboard::show_dashboard(&job_manager, io),
-                    "P" => use_proxy = !use_proxy,
-                    "0" => {
-                        io.println("\nExiting. Stay safe!");
-                        break;
-                    },
-                    _ => {}
+                run_tool_dispatch(
+                    tool,
+                    use_proxy,
+                    executor.clone(),
+                    io,
+                    Some(job_manager.clone()),
+                    &input_provider,
+                );
+            }
+            ui::MenuResult::Extra(key) => match key.as_str() {
+                "D" => dashboard::show_dashboard(&job_manager, io),
+                "P" => use_proxy = !use_proxy,
+                "0" => {
+                    io.println("\nExiting. Stay safe!");
+                    break;
                 }
+                _ => {}
             },
             ui::MenuResult::Back => {
                 break;
@@ -207,12 +226,24 @@ fn run_tool_dispatch(
     executor: Arc<dyn CommandExecutor + Send + Sync>,
     io: &dyn IoHandler,
     job_manager: Option<Arc<JobManager>>,
-    input: &dyn InputProvider
+    input: &dyn InputProvider,
 ) {
     match &tool.implementation {
-        ToolImplementation::Specialized(strategy) => run_specialized_logic(*strategy, use_proxy, executor, io, job_manager, input),
-        ToolImplementation::Standard(spec) => run_standard_tool(spec, use_proxy, executor, io, job_manager, &tool.name, input),
-        ToolImplementation::Submenu(category) => run_category_logic(*category, use_proxy, executor, io, job_manager, input),
+        ToolImplementation::Specialized(strategy) => {
+            run_specialized_logic(*strategy, use_proxy, executor, io, job_manager, input)
+        }
+        ToolImplementation::Standard(spec) => run_standard_tool(
+            spec,
+            use_proxy,
+            executor,
+            io,
+            job_manager,
+            &tool.name,
+            input,
+        ),
+        ToolImplementation::Submenu(category) => {
+            run_category_logic(*category, use_proxy, executor, io, job_manager, input)
+        }
         ToolImplementation::PlaceholderAdd => add_custom_tool_flow(io, input),
     }
 }
@@ -223,7 +254,7 @@ fn run_category_logic(
     executor: Arc<dyn CommandExecutor + Send + Sync>,
     io: &dyn IoHandler,
     job_manager: Option<Arc<JobManager>>,
-    input: &dyn InputProvider
+    input: &dyn InputProvider,
 ) {
     match category {
         MenuCategory::Recon => recon_category(use_proxy, executor, io, job_manager, input),
@@ -231,7 +262,9 @@ fn run_category_logic(
         MenuCategory::Exploit => exploit_category(use_proxy, executor, io, job_manager, input),
         MenuCategory::NetOps => netops_category(use_proxy, executor, io, job_manager, input),
         MenuCategory::Wireless => wireless_category(use_proxy, executor, io, job_manager, input),
-        MenuCategory::UserTools => custom_tools_category(use_proxy, executor, io, job_manager, input),
+        MenuCategory::UserTools => {
+            custom_tools_category(use_proxy, executor, io, job_manager, input)
+        }
     }
 }
 
@@ -241,7 +274,7 @@ fn run_specialized_logic(
     executor: Arc<dyn CommandExecutor + Send + Sync>,
     io: &dyn IoHandler,
     job_manager: Option<Arc<JobManager>>,
-    input: &dyn InputProvider
+    input: &dyn InputProvider,
 ) {
     match strategy {
         SpecializedStrategy::Nmap => {
@@ -256,89 +289,126 @@ fn run_specialized_logic(
             let run_bg = input.confirm_background();
             // Legacy configure still needs IO for profile selection (refactor needed later)
             let config = nmap::configure_nmap(&target, None, false, None, &*executor, io);
-            
-            run_tool_workflow(Some(config), use_proxy, executor, io, job_manager, 
+
+            run_tool_workflow(
+                Some(config),
+                use_proxy,
+                executor,
+                io,
+                job_manager,
                 |cfg, p, ex, i, job| nmap::execute_nmap_scan(cfg, p, &*ex, i, job),
                 |cfg| format!("Nmap {}", cfg.target),
-                run_bg
+                run_bg,
             );
-        },
+        }
         SpecializedStrategy::WebEnum => {
             let target = match input.resolve(&ToolInput::Target) {
                 Some(t) => t,
                 None => return,
             };
             let run_bg = input.confirm_background();
-            
+
             let config = web::configure_web_enum(&target, None, &*executor, io);
-            run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+            run_tool_workflow(
+                config,
+                use_proxy,
+                executor,
+                io,
+                job_manager,
                 |cfg, p, ex, i, _job| web::execute_web_enum(cfg, p, &*ex, i),
                 |cfg| format!("WebEnum {}", cfg.target),
-                run_bg
+                run_bg,
             );
-        },
+        }
         SpecializedStrategy::Fuzzer => {
-            let target = match input.resolve(&ToolInput::Text("Enter Target URL (with FUZZ):".to_string())) {
+            let target = match input.resolve(&ToolInput::Text(
+                "Enter Target URL (with FUZZ):".to_string(),
+            )) {
                 Some(t) => t,
                 None => return,
             };
             let run_bg = input.confirm_background();
-            
+
             let config = fuzzer::configure_fuzzer(&target, None, None, &*executor, io);
-            run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+            run_tool_workflow(
+                config,
+                use_proxy,
+                executor,
+                io,
+                job_manager,
                 |cfg, p, ex, i, _job| fuzzer::execute_fuzzer(cfg, p, &*ex, i),
                 |cfg| format!("Fuzzer {}", cfg.target),
-                run_bg
+                run_bg,
             );
-        },
+        }
         SpecializedStrategy::ExploitActive => {
             let run_bg = input.confirm_background();
             let config = exploit::configure_exploitation("", None, None, &*executor, io);
-            run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+            run_tool_workflow(
+                config,
+                use_proxy,
+                executor,
+                io,
+                job_manager,
                 |cfg, p, ex, i, _job| exploit::execute_exploitation(cfg, p, &*ex, i),
                 |_cfg| "Exploitation Job".to_string(),
-                run_bg
+                run_bg,
             );
-        },
+        }
         SpecializedStrategy::Poison => {
             let interface = match input.resolve(&ToolInput::Interface) {
                 Some(i) => i,
                 None => return,
             };
             let run_bg = input.confirm_background();
-            
+
             let config = poison::configure_poisoning(&interface, &*executor, io);
-            run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+            run_tool_workflow(
+                config,
+                use_proxy,
+                executor,
+                io,
+                job_manager,
                 |cfg, p, ex, i, _job| poison::execute_poisoning(cfg, p, &*ex, i),
                 |cfg| format!("Poisoning {}", cfg.interface),
-                run_bg
+                run_bg,
             );
-        },
+        }
         SpecializedStrategy::Wifi => {
             let interface = match input.resolve(&ToolInput::Interface) {
                 Some(i) => i,
                 None => return,
             };
             let run_bg = input.confirm_background();
-            
+
             let config = wifi::configure_wifi(&interface, &*executor, io);
-            run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+            run_tool_workflow(
+                config,
+                use_proxy,
+                executor,
+                io,
+                job_manager,
                 |cfg, p, ex, i, _job| wifi::execute_wifi_audit(cfg, p, &*ex, i),
                 |cfg| format!("WifiAudit {}", cfg.interface),
-                run_bg
+                run_bg,
             );
-        },
+        }
         SpecializedStrategy::Bluetooth => {
             let mac = input.resolve_text("Enter Target MAC (Optional):", Some(""));
             let run_bg = input.confirm_background();
-            
+
             let config = bluetooth::configure_bluetooth(&mac.unwrap_or_default(), &*executor, io);
-            run_tool_workflow(config, use_proxy, executor, io, job_manager, 
+            run_tool_workflow(
+                config,
+                use_proxy,
+                executor,
+                io,
+                job_manager,
                 |cfg, p, ex, i, _job| bluetooth::execute_bluetooth(cfg, p, &*ex, i),
                 |cfg| format!("Bluetooth {}", cfg.profile.name),
-                run_bg
+                run_bg,
             );
-        },
+        }
     }
 }
 
@@ -349,26 +419,34 @@ fn run_standard_tool(
     io: &dyn IoHandler,
     job_manager: Option<Arc<JobManager>>,
     tool_name: &str,
-    input: &dyn InputProvider
+    input: &dyn InputProvider,
 ) {
-    io.println(&format!("{}", format!("[*] Running Tool: {}", tool_name).blue().bold()));
+    io.println(&format!(
+        "{}",
+        format!("[*] Running Tool: {}", tool_name).blue().bold()
+    ));
 
     // Gather Inputs
     let mut args = spec.args_template.clone();
-    
+
     for input_def in &spec.inputs {
         let (val, placeholder) = match input_def {
             ToolInput::Target | ToolInput::Interface | ToolInput::Wordlist | ToolInput::Text(_) => {
                 let v = input.resolve(input_def);
-                if v.is_none() { return; }
-                (v.unwrap(), match input_def {
-                    ToolInput::Target => "{target}",
-                    ToolInput::Interface => "{interface}",
-                    ToolInput::Wordlist => "{wordlist}",
-                    ToolInput::Text(_) => "{text}", // Naive placeholder for now
-                    _ => "",
-                })
-            },
+                if v.is_none() {
+                    return;
+                }
+                (
+                    v.unwrap(),
+                    match input_def {
+                        ToolInput::Target => "{target}",
+                        ToolInput::Interface => "{interface}",
+                        ToolInput::Wordlist => "{wordlist}",
+                        ToolInput::Text(_) => "{text}", // Naive placeholder for now
+                        _ => "",
+                    },
+                )
+            }
             ToolInput::None => (String::new(), ""),
         };
 
@@ -379,35 +457,48 @@ fn run_standard_tool(
 
     let binary = spec.binary.clone();
     let final_args_str = args.clone();
-    
+
     let run_bg = input.confirm_background();
     let requires_root = spec.requires_root;
 
-    let task = move |_cfg: (), _proxy: bool, exec: &dyn CommandExecutor, io: &dyn IoHandler, job: Option<Arc<Job>>| {
-         let arg_parts: Vec<&str> = final_args_str.split_whitespace().collect();
-         io.println(&format!("[+] Executing: {} {}", binary, final_args_str));
-         
-         let cancellation_token = job.as_ref().map(|j| j.cancelled.clone());
+    let task = move |_cfg: (),
+                     _proxy: bool,
+                     exec: &dyn CommandExecutor,
+                     io: &dyn IoHandler,
+                     job: Option<Arc<Job>>| {
+        let arg_parts: Vec<&str> = final_args_str.split_whitespace().collect();
+        io.println(&format!("[+] Executing: {} {}", binary, final_args_str));
 
-         let res = if requires_root && !exec.is_root() {
-             let mut sudo_args = vec![binary.as_str()];
-             sudo_args.extend(arg_parts);
-             exec.execute_cancellable("sudo", &sudo_args, "", cancellation_token)
-         } else {
-             exec.execute_cancellable(&binary, &arg_parts, "", cancellation_token)
-         };
+        let cancellation_token = job.as_ref().map(|j| j.cancelled.clone());
 
-         match res {
-             Ok(s) => if !s.success() { io.println(&format!("{}", "[!] Tool exited with error.".red())); },
-             Err(e) => io.println(&format!("{} {}", "[!] Execution failed:".red(), e)),
-         }
+        let res = if requires_root && !exec.is_root() {
+            let mut sudo_args = vec![binary.as_str()];
+            sudo_args.extend(arg_parts);
+            exec.execute_cancellable("sudo", &sudo_args, "", cancellation_token)
+        } else {
+            exec.execute_cancellable(&binary, &arg_parts, "", cancellation_token)
+        };
+
+        match res {
+            Ok(s) => {
+                if !s.success() {
+                    io.println(&format!("{}", "[!] Tool exited with error.".red()));
+                }
+            }
+            Err(e) => io.println(&format!("{} {}", "[!] Execution failed:".red(), e)),
+        }
     };
 
     let name = tool_name.to_string();
-    run_tool_workflow(Some(()), use_proxy, executor, io, job_manager, 
+    run_tool_workflow(
+        Some(()),
+        use_proxy,
+        executor,
+        io,
+        job_manager,
         task,
         move |_| name.clone(),
-        run_bg
+        run_bg,
     );
 }
 
@@ -415,20 +506,36 @@ fn add_custom_tool_flow(io: &dyn IoHandler, input: &dyn InputProvider) {
     ui::clear_screen();
     ui::print_header(io, "Custom Toolbox", Some("Add New Tool"));
 
-    io.println(&format!("{}", "Define a new user tool (saved to file).".yellow()));
+    io.println(&format!(
+        "{}",
+        "Define a new user tool (saved to file).".yellow()
+    ));
     let name = input.resolve_text("Tool Name:", None);
-    if name.is_none() { return; }
-    
-    let binary = input.resolve_text("Binary/Command:", None).unwrap_or_default();
-    let args = input.resolve_text("Arguments Template:", None).unwrap_or_default();
-    
+    if name.is_none() {
+        return;
+    }
+
+    let binary = input
+        .resolve_text("Binary/Command:", None)
+        .unwrap_or_default();
+    let args = input
+        .resolve_text("Arguments Template:", None)
+        .unwrap_or_default();
+
     io.println("\n[!] Saving tool definition... (Simulated)");
-    
+
     let tool = ToolSpecification::new(&binary, &args, vec![ToolInput::Target]);
-    
+
     if let Ok(json) = serde_json::to_string_pretty(&tool) {
-         io.println(&format!("Saved Config for '{}':\n{}", name.as_ref().unwrap(), json.cyan()));
-         let _ = fs::write(format!("custom_{}.json", name.unwrap().replace(' ', "_")), json);
+        io.println(&format!(
+            "Saved Config for '{}':\n{}",
+            name.as_ref().unwrap(),
+            json.cyan()
+        ));
+        let _ = fs::write(
+            format!("custom_{}.json", name.unwrap().replace(' ', "_")),
+            json,
+        );
     }
 
     io.print("\nTool added! Press Enter to return...");
@@ -436,63 +543,184 @@ fn add_custom_tool_flow(io: &dyn IoHandler, input: &dyn InputProvider) {
     let _ = io.read_line();
 }
 
-fn custom_tools_category(use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>, input: &dyn InputProvider) {
-    let tools = vec![
-        Tool::add_placeholder(),
-    ];
-    show_submenu("Custom Toolbox", tools, use_proxy, executor, io, job_manager, input);
+fn custom_tools_category(
+    use_proxy: bool,
+    executor: Arc<dyn CommandExecutor + Send + Sync>,
+    io: &dyn IoHandler,
+    job_manager: Option<Arc<JobManager>>,
+    input: &dyn InputProvider,
+) {
+    let tools = vec![Tool::add_placeholder()];
+    show_submenu(
+        "Custom Toolbox",
+        tools,
+        use_proxy,
+        executor,
+        io,
+        job_manager,
+        input,
+    );
 }
 
 // --- Categories ---
 
-fn recon_category(use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>, input: &dyn InputProvider) {
-    let tools = vec![
-        Tool::core_specialized("Nmap Automator (Standard)", "Automated Nmap Scans", SpecializedStrategy::Nmap),
-    ];
-    show_submenu("Network Recon", tools, use_proxy, executor, io, job_manager, input);
+fn recon_category(
+    use_proxy: bool,
+    executor: Arc<dyn CommandExecutor + Send + Sync>,
+    io: &dyn IoHandler,
+    job_manager: Option<Arc<JobManager>>,
+    input: &dyn InputProvider,
+) {
+    let tools = vec![Tool::core_specialized(
+        "Nmap Automator (Standard)",
+        "Automated Nmap Scans",
+        SpecializedStrategy::Nmap,
+    )];
+    show_submenu(
+        "Network Recon",
+        tools,
+        use_proxy,
+        executor,
+        io,
+        job_manager,
+        input,
+    );
 }
 
-fn web_category(use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>, input: &dyn InputProvider) {
+fn web_category(
+    use_proxy: bool,
+    executor: Arc<dyn CommandExecutor + Send + Sync>,
+    io: &dyn IoHandler,
+    job_manager: Option<Arc<JobManager>>,
+    input: &dyn InputProvider,
+) {
     let tools = vec![
-        Tool::core_specialized("Web Enumeration - Gobuster", "Directory Brute-forcing", SpecializedStrategy::WebEnum),
-        Tool::core_specialized("Web Fuzzing - Ffuf", "Web Fuzzing", SpecializedStrategy::Fuzzer),
+        Tool::core_specialized(
+            "Web Enumeration - Gobuster",
+            "Directory Brute-forcing",
+            SpecializedStrategy::WebEnum,
+        ),
+        Tool::core_specialized(
+            "Web Fuzzing - Ffuf",
+            "Web Fuzzing",
+            SpecializedStrategy::Fuzzer,
+        ),
     ];
-    show_submenu("Web Arsenal", tools, use_proxy, executor, io, job_manager, input);
+    show_submenu(
+        "Web Arsenal",
+        tools,
+        use_proxy,
+        executor,
+        io,
+        job_manager,
+        input,
+    );
 }
 
-fn exploit_category(use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>, input: &dyn InputProvider) {
+fn exploit_category(
+    use_proxy: bool,
+    executor: Arc<dyn CommandExecutor + Send + Sync>,
+    io: &dyn IoHandler,
+    job_manager: Option<Arc<JobManager>>,
+    input: &dyn InputProvider,
+) {
     let tools = vec![
         Tool::core_standard(
             "Exploit Search - Searchsploit",
             "Search Exploit-DB",
-            ToolSpecification::new("searchsploit", "{query}", vec![ToolInput::Text("Enter Search Query: ".to_string())])
+            ToolSpecification::new(
+                "searchsploit",
+                "{query}",
+                vec![ToolInput::Text("Enter Search Query: ".to_string())],
+            ),
         ),
-        Tool::core_specialized("Active Exploitation (SQLMap, Curl, Hydra)", "Active Attacks", SpecializedStrategy::ExploitActive),
+        Tool::core_specialized(
+            "Active Exploitation (SQLMap, Curl, Hydra)",
+            "Active Attacks",
+            SpecializedStrategy::ExploitActive,
+        ),
     ];
-    show_submenu("Exploitation Hub", tools, use_proxy, executor, io, job_manager, input);
+    show_submenu(
+        "Exploitation Hub",
+        tools,
+        use_proxy,
+        executor,
+        io,
+        job_manager,
+        input,
+    );
 }
 
-fn netops_category(use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>, input: &dyn InputProvider) {
+fn netops_category(
+    use_proxy: bool,
+    executor: Arc<dyn CommandExecutor + Send + Sync>,
+    io: &dyn IoHandler,
+    job_manager: Option<Arc<JobManager>>,
+    input: &dyn InputProvider,
+) {
     let tools = vec![
         Tool::core_standard(
             "Packet Sniffer - Tcpdump",
             "Packet capture",
-            ToolSpecification::new("tcpdump", "-i {interface} -v", vec![ToolInput::Interface]).require_root()
+            ToolSpecification::new("tcpdump", "-i {interface} -v", vec![ToolInput::Interface])
+                .require_root(),
         ),
-        Tool::core_specialized("LAN Poisoning - Responder", "LLMNR Poisoner", SpecializedStrategy::Poison),
+        Tool::core_specialized(
+            "LAN Poisoning - Responder",
+            "LLMNR Poisoner",
+            SpecializedStrategy::Poison,
+        ),
     ];
-    show_submenu("Network Operations", tools, use_proxy, executor, io, job_manager, input);
+    show_submenu(
+        "Network Operations",
+        tools,
+        use_proxy,
+        executor,
+        io,
+        job_manager,
+        input,
+    );
 }
 
-fn wireless_category(use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>, input: &dyn InputProvider) {
+fn wireless_category(
+    use_proxy: bool,
+    executor: Arc<dyn CommandExecutor + Send + Sync>,
+    io: &dyn IoHandler,
+    job_manager: Option<Arc<JobManager>>,
+    input: &dyn InputProvider,
+) {
     let tools = vec![
-        Tool::core_specialized("WiFi Audit - Wifite", "Wireless Auditing", SpecializedStrategy::Wifi),
-        Tool::core_specialized("Bluetooth Arsenal", "Bluetooth Attacks", SpecializedStrategy::Bluetooth),
+        Tool::core_specialized(
+            "WiFi Audit - Wifite",
+            "Wireless Auditing",
+            SpecializedStrategy::Wifi,
+        ),
+        Tool::core_specialized(
+            "Bluetooth Arsenal",
+            "Bluetooth Attacks",
+            SpecializedStrategy::Bluetooth,
+        ),
     ];
-    show_submenu("Wireless & RF", tools, use_proxy, executor, io, job_manager, input);
+    show_submenu(
+        "Wireless & RF",
+        tools,
+        use_proxy,
+        executor,
+        io,
+        job_manager,
+        input,
+    );
 }
 
-fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: Arc<dyn CommandExecutor + Send + Sync>, io: &dyn IoHandler, job_manager: Option<Arc<JobManager>>, input: &dyn InputProvider) {
+fn show_submenu(
+    title: &str,
+    tools: Vec<Tool>,
+    use_proxy: bool,
+    executor: Arc<dyn CommandExecutor + Send + Sync>,
+    io: &dyn IoHandler,
+    job_manager: Option<Arc<JobManager>>,
+    input: &dyn InputProvider,
+) {
     loop {
         clear_screen();
         ui::print_header(io, "PURPL CLI", Some(title));
@@ -506,14 +734,25 @@ fn show_submenu(title: &str, tools: Vec<Tool>, use_proxy: bool, executor: Arc<dy
         io.flush();
 
         let choice_str = io.read_line();
-        if choice_str.trim().is_empty() { break; }
+        if choice_str.trim().is_empty() {
+            break;
+        }
         let choice_idx = choice_str.trim().parse::<usize>().unwrap_or(99);
 
-        if choice_idx == 0 { break; }
+        if choice_idx == 0 {
+            break;
+        }
 
         if choice_idx > 0 && choice_idx <= tools.len() {
             let tool = &tools[choice_idx - 1];
-            run_tool_dispatch(tool, use_proxy, executor.clone(), io, job_manager.clone(), input);
+            run_tool_dispatch(
+                tool,
+                use_proxy,
+                executor.clone(),
+                io,
+                job_manager.clone(),
+                input,
+            );
             io.print("\nPress Enter to return to menu...");
             io.flush();
             let _ = io.read_line();
@@ -530,8 +769,7 @@ fn run_tool_workflow<C, F, N>(
     task: F,
     name_gen: N,
     run_bg: bool,
-)
-where
+) where
     C: Send + Sync + 'static + Clone,
     F: Fn(C, bool, &dyn CommandExecutor, &dyn IoHandler, Option<Arc<Job>>) + Send + Sync + 'static,
     N: Fn(&C) -> String + Send + Sync + 'static,
@@ -543,19 +781,27 @@ where
                 let task_arc = Arc::new(task);
                 let task_clone = task_arc.clone();
                 let cfg_arc = Arc::new(cfg);
-                
-                jm.spawn_job(&name, move |ex, i, job| {
-                     let c = cfg_arc.clone();
-                     task_clone((*c).clone(), use_proxy, &*ex, i, Some(job));
-                }, executor, true);
-                
-                io.println(&format!("{}", format!("Job '{}' started in background.", name).green()));
+
+                jm.spawn_job(
+                    &name,
+                    move |ex, i, job| {
+                        let c = cfg_arc.clone();
+                        task_clone((*c).clone(), use_proxy, &*ex, i, Some(job));
+                    },
+                    executor,
+                    true,
+                );
+
+                io.println(&format!(
+                    "{}",
+                    format!("Job '{}' started in background.", name).green()
+                ));
             } else {
-                 io.println(&format!("{}", "[!] Job Manager not available.".red()));
-                 task(cfg, use_proxy, &*executor, io, None);
-                 io.print("\nPress Enter to return to menu...");
-                 io.flush();
-                 let _ = io.read_line();
+                io.println(&format!("{}", "[!] Job Manager not available.".red()));
+                task(cfg, use_proxy, &*executor, io, None);
+                io.print("\nPress Enter to return to menu...");
+                io.flush();
+                let _ = io.read_line();
             }
         } else {
             // Foreground
@@ -573,10 +819,14 @@ fn main() {
     });
 
     let cli = Cli::parse();
-    
+
     // Determine configuration based on command or global args
     let (container_mode, image_name, serve_port) = match &cli.command {
-        Some(Commands::Serve { port, container, image }) => (*container, image.clone(), Some(*port)),
+        Some(Commands::Serve {
+            port,
+            container,
+            image,
+        }) => (*container, image.clone(), Some(*port)),
         _ => (cli.container, cli.image.clone(), None),
     };
 
@@ -613,15 +863,23 @@ fn main() {
                 return;
             }
         }
-        nmap::run_nmap_scan(target, cli.port.as_deref(), cli.no_ping, cli.args.as_deref(), use_proxy, &*executor, &io);
+        nmap::run_nmap_scan(
+            target,
+            cli.port.as_deref(),
+            cli.no_ping,
+            cli.args.as_deref(),
+            use_proxy,
+            &*executor,
+            &io,
+        );
         return;
     }
 
     if let Some(interface) = cli.wifite {
         // Interface validation (basic check)
         if interface.contains(';') || interface.contains('|') {
-             io.println(&format!("{}", "[!] Invalid Interface name.".red()));
-             return;
+            io.println(&format!("{}", "[!] Invalid Interface name.".red()));
+            return;
         }
         wifi::run_wifi_audit(&interface, use_proxy, &*executor, &io);
         return;
@@ -629,8 +887,8 @@ fn main() {
 
     if let Some(interface) = cli.sniff {
         if interface.contains(';') || interface.contains('|') {
-             io.println(&format!("{}", "[!] Invalid Interface name.".red()));
-             return;
+            io.println(&format!("{}", "[!] Invalid Interface name.".red()));
+            return;
         }
         sniffer::run_sniffer(&interface, use_proxy, &*executor, &io);
         return;
@@ -646,19 +904,26 @@ fn main() {
     }
 
     if let Some(target) = &cli.fuzz {
-        // Fuzz target might contain FUZZ keyword, but base URL should be valid? 
+        // Fuzz target might contain FUZZ keyword, but base URL should be valid?
         // Or we loosen validation for Fuzzing. validate_target allows URLs.
         // Let's rely on basic shell char check for now.
         if target.contains(';') || target.contains('|') {
-             io.println(&format!("{}", "[!] Invalid Target.".red()));
-             return;
+            io.println(&format!("{}", "[!] Invalid Target.".red()));
+            return;
         }
-        fuzzer::run_fuzzer(target, cli.wordlist.as_deref(), cli.args.as_deref(), use_proxy, &*executor, &io);
+        fuzzer::run_fuzzer(
+            target,
+            cli.wordlist.as_deref(),
+            cli.args.as_deref(),
+            use_proxy,
+            &*executor,
+            &io,
+        );
         return;
     }
 
     if let Some(target) = &cli.brute {
-         if let Err(e) = validation::validate_target(target) {
+        if let Err(e) = validation::validate_target(target) {
             io.println(&format!("{} {}", "[!] Invalid Target:".red(), e));
             return;
         }
@@ -669,8 +934,8 @@ fn main() {
     if let Some(target) = &cli.search_exploit {
         // Search query might be loose text, but shouldn't have shell chars
         if target.contains(';') || target.contains('|') {
-             io.println(&format!("{}", "[!] Invalid Search Query.".red()));
-             return;
+            io.println(&format!("{}", "[!] Invalid Search Query.".red()));
+            return;
         }
         search_exploit::run_searchsploit(target, use_proxy, &*executor, &io);
         return;
@@ -681,23 +946,30 @@ fn main() {
             io.println(&format!("{} {}", "[!] Invalid Target:".red(), e));
             return;
         }
-        exploit::run_exploitation_tool(target, cli.tool.as_deref(), cli.args.as_deref(), use_proxy, &*executor, &io);
+        exploit::run_exploitation_tool(
+            target,
+            cli.tool.as_deref(),
+            cli.args.as_deref(),
+            use_proxy,
+            &*executor,
+            &io,
+        );
         return;
     }
 
     if let Some(interface) = &cli.poison {
         if interface.contains(';') || interface.contains('|') {
-             io.println(&format!("{}", "[!] Invalid Interface.".red()));
-             return;
+            io.println(&format!("{}", "[!] Invalid Interface.".red()));
+            return;
         }
         poison::run_poisoning(interface, use_proxy, &*executor, &io);
         return;
     }
 
     if let Some(arg) = &cli.bluetooth {
-         if arg.contains(';') || arg.contains('|') {
-             io.println(&format!("{}", "[!] Invalid Argument.".red()));
-             return;
+        if arg.contains(';') || arg.contains('|') {
+            io.println(&format!("{}", "[!] Invalid Argument.".red()));
+            return;
         }
         bluetooth::run_bluetooth_attacks(arg, use_proxy, &*executor, &io);
         return;

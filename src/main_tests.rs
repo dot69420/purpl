@@ -1,15 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use crate::{Cli, Commands, run_interactive_mode};
-    use crate::tool_model::{Tool, SpecializedStrategy, ToolImplementation, ToolSource};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
     use crate::job_manager::JobManager;
-    use std::sync::Arc;
-    use std::fs;
+    use crate::tool_model::{SpecializedStrategy, Tool, ToolImplementation, ToolSource};
+    use crate::{Cli, Commands, run_interactive_mode};
     use clap::CommandFactory;
     use clap::Parser;
-
+    use std::fs;
+    use std::sync::Arc;
 
     #[test]
     fn test_cli_parsing_nmap() {
@@ -99,7 +98,7 @@ mod tests {
         io.add_input("0\n");
 
         // 8. Exit (Option 0 in Main Menu)
-        io.add_input("0\n"); 
+        io.add_input("0\n");
 
         // Mock nmap host discovery output using new registry
         executor.register_output("nmap", b"Nmap scan report for 127.0.0.1");
@@ -108,7 +107,7 @@ mod tests {
 
         let calls = executor.get_calls();
         assert!(!calls.is_empty());
-        
+
         let cmds: Vec<String> = calls.iter().map(|c| c.command.clone()).collect();
         assert!(cmds.contains(&"nmap".to_string()));
     }
@@ -122,7 +121,7 @@ mod tests {
         let executor = Arc::new(MockExecutor::new());
         let io = MockIoHandler::new();
         let job_manager = Arc::new(JobManager::new());
-        
+
         // --- Setup Mocks ---
         executor.register_success("nmap");
         executor.register_success("gobuster");
@@ -130,9 +129,9 @@ mod tests {
         executor.register_success("tcpdump");
         // Mock sudo call for sniffer if it asks (it shouldn't if root, but test executor mimics non-root usually? MockExecutor has is_root() -> true by default).
         // If is_root() is true, it won't ask sudo.
-        
-        executor.register_output("ip", b"1: lo: <LOOPBACK...\n>2: eth0: <BROADCAST...>"); 
-        
+
+        executor.register_output("ip", b"1: lo: <LOOPBACK...\n>2: eth0: <BROADCAST...>");
+
         // --- Sequence of Inputs ---
 
         // 1. Network Recon (Option 1) -> Nmap (Option 1)
@@ -174,9 +173,18 @@ mod tests {
         // --- Verification ---
         let calls = executor.get_calls();
         let commands: Vec<String> = calls.iter().map(|c| c.command.clone()).collect();
-        
-        assert!(commands.contains(&"nmap".to_string()), "Nmap should have been called");
-        assert!(commands.contains(&"gobuster".to_string()), "Gobuster should have been called");
-        assert!(commands.contains(&"tcpdump".to_string()), "Tcpdump should have been called");
+
+        assert!(
+            commands.contains(&"nmap".to_string()),
+            "Nmap should have been called"
+        );
+        assert!(
+            commands.contains(&"gobuster".to_string()),
+            "Gobuster should have been called"
+        );
+        assert!(
+            commands.contains(&"tcpdump".to_string()),
+            "Tcpdump should have been called"
+        );
     }
 }

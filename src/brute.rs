@@ -1,12 +1,12 @@
-use std::path::{Path, PathBuf};
-use std::fs;
-use chrono::Local;
-use colored::*;
-use crate::history::{append_history, HistoryEntry};
 use crate::executor::CommandExecutor;
+use crate::history::{HistoryEntry, append_history};
 use crate::io_handler::IoHandler;
 use crate::nmap;
 use crate::report;
+use chrono::Local;
+use colored::*;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct BruteProfile {
@@ -18,7 +18,13 @@ pub struct BruteProfile {
 }
 
 impl BruteProfile {
-    pub fn new(name: &str, description: &str, userlist: &str, passlist: &str, flags: &[&'static str]) -> Self {
+    pub fn new(
+        name: &str,
+        description: &str,
+        userlist: &str,
+        passlist: &str,
+        flags: &[&'static str],
+    ) -> Self {
         Self {
             name: name.to_string(),
             description: description.to_string(),
@@ -37,19 +43,34 @@ pub struct BruteConfig {
     pub profile: BruteProfile,
 }
 
-pub fn configure_brute_force(target_input: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<BruteConfig> {
+pub fn configure_brute_force(
+    target_input: &str,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) -> Option<BruteConfig> {
     // 1. Check dependency
     if executor.execute_output("hydra", &["-h"]).is_err() {
-        io.println(&format!("{}", "[-] 'hydra' not found. Please install it (sudo pacman -S hydra).".red()));
+        io.println(&format!(
+            "{}",
+            "[-] 'hydra' not found. Please install it (sudo pacman -S hydra).".red()
+        ));
         return None;
     }
 
-    io.println(&format!("\n{}", "--- Credential Access Module (Hydra) ---".red().bold()));
+    io.println(&format!(
+        "\n{}",
+        "--- Credential Access Module (Hydra) ---".red().bold()
+    ));
 
     // 2. Select Target
     let final_target = if target_input.is_empty() {
         if let Some(t) = select_target_or_scan(use_proxy, executor, io) {
-            io.println(&format!("{} {}", "[*] Target set to:".blue(), t.yellow().bold()));
+            io.println(&format!(
+                "{} {}",
+                "[*] Target set to:".blue(),
+                t.yellow().bold()
+            ));
             t
         } else {
             return None;
@@ -64,11 +85,24 @@ pub fn configure_brute_force(target_input: &str, use_proxy: bool, executor: &dyn
     let selected_port;
 
     if !detected_services.is_empty() {
-        io.println(&format!("\n{}", "Detected Services (from Nmap):".green().bold()));
+        io.println(&format!(
+            "\n{}",
+            "Detected Services (from Nmap):".green().bold()
+        ));
         for (i, svc) in detected_services.iter().enumerate() {
-            io.println(&format!("[{}] {} ({}/{}) - {}", i + 1, svc.name, svc.port, svc.protocol, svc.version));
+            io.println(&format!(
+                "[{}] {} ({}/{}) - {}",
+                i + 1,
+                svc.name,
+                svc.port,
+                svc.protocol,
+                svc.version
+            ));
         }
-        io.println(&format!("[{}] Manual Protocol Selection", detected_services.len() + 1));
+        io.println(&format!(
+            "[{}] Manual Protocol Selection",
+            detected_services.len() + 1
+        ));
 
         io.print("\nSelect target service: ");
         io.flush();
@@ -80,16 +114,19 @@ pub fn configure_brute_force(target_input: &str, use_proxy: bool, executor: &dyn
                 selected_port = svc.port.clone();
             } else {
                 // Manual selection fallback
-                 selected_protocol = manual_protocol_selection(io);
-                 selected_port = "22".to_string(); // Default port for manual fallback logic simplification
+                selected_protocol = manual_protocol_selection(io);
+                selected_port = "22".to_string(); // Default port for manual fallback logic simplification
             }
         } else {
-             // Default or invalid
-             selected_protocol = manual_protocol_selection(io);
-             selected_port = "22".to_string();
+            // Default or invalid
+            selected_protocol = manual_protocol_selection(io);
+            selected_port = "22".to_string();
         }
     } else {
-        io.println(&format!("\n{}", "[-] No Nmap data found. Proceeding with manual selection.".dimmed()));
+        io.println(&format!(
+            "\n{}",
+            "[-] No Nmap data found. Proceeding with manual selection.".dimmed()
+        ));
         selected_protocol = manual_protocol_selection(io);
         selected_port = "22".to_string(); // Default
     }
@@ -100,16 +137,18 @@ pub fn configure_brute_force(target_input: &str, use_proxy: bool, executor: &dyn
         "/usr/share/seclists/Usernames/top-usernames-shortlist.txt",
         "/usr/share/wordlists/seclists/Usernames/top-usernames-shortlist.txt",
         "/usr/share/wordlists/metasploit/unix_users.txt",
-        "wordlists/users.txt"
-    ]).unwrap_or_else(|| "manual".to_string());
+        "wordlists/users.txt",
+    ])
+    .unwrap_or_else(|| "manual".to_string());
 
     // Common Passwords
     let pass_list_path = find_wordlist(&[
         "/usr/share/seclists/Passwords/Common-Credentials/top-20-common-SSH-passwords.txt",
         "/usr/share/wordlists/seclists/Passwords/Common-Credentials/top-20-common-SSH-passwords.txt", // Good for quick spray
-        "/usr/share/wordlists/metasploit/unix_passwords.txt", 
-        "wordlists/passwords.txt"
-    ]).unwrap_or_else(|| "manual".to_string());
+        "/usr/share/wordlists/metasploit/unix_passwords.txt",
+        "wordlists/passwords.txt",
+    ])
+    .unwrap_or_else(|| "manual".to_string());
 
     // 5. Define Profiles
     let mut profiles = Vec::new();
@@ -120,7 +159,7 @@ pub fn configure_brute_force(target_input: &str, use_proxy: bool, executor: &dyn
             "Top usernames vs Top passwords. Fast check for weak creds.",
             &user_list_path,
             &pass_list_path,
-            &["-t", "4", "-I"] // -I to ignore existing restore file
+            &["-t", "4", "-I"], // -I to ignore existing restore file
         ));
     }
 
@@ -129,7 +168,7 @@ pub fn configure_brute_force(target_input: &str, use_proxy: bool, executor: &dyn
         "Target one specific user (e.g., 'root') with a password list.",
         "input", // placeholder
         &pass_list_path,
-        &["-t", "4"]
+        &["-t", "4"],
     ));
 
     profiles.push(BruteProfile::new(
@@ -137,13 +176,18 @@ pub fn configure_brute_force(target_input: &str, use_proxy: bool, executor: &dyn
         "Select your own lists.",
         "manual",
         "manual",
-        &["-t", "4"]
+        &["-t", "4"],
     ));
 
     // 6. Select Profile
     io.println(&format!("\n{}", "Select Attack Profile:".blue().bold()));
     for (i, p) in profiles.iter().enumerate() {
-        io.println(&format!("[{}] {} - {}", i + 1, p.name.green(), p.description));
+        io.println(&format!(
+            "[{}] {} - {}",
+            i + 1,
+            p.name.green(),
+            p.description
+        ));
     }
 
     io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
@@ -167,17 +211,17 @@ pub fn configure_brute_force(target_input: &str, use_proxy: bool, executor: &dyn
         let user = io.read_line();
         selected_profile.userlist = user.trim().to_string();
     } else if selected_profile.userlist == "manual" {
-         io.print(&format!("{}", "Enter path to USER list: ".yellow()));
-         io.flush();
-         let path = io.read_line();
-         selected_profile.userlist = path.trim().to_string();
-    } 
+        io.print(&format!("{}", "Enter path to USER list: ".yellow()));
+        io.flush();
+        let path = io.read_line();
+        selected_profile.userlist = path.trim().to_string();
+    }
 
     if selected_profile.passlist == "manual" {
-         io.print(&format!("{}", "Enter path to PASSWORD list: ".yellow()));
-         io.flush();
-         let path = io.read_line();
-         selected_profile.passlist = path.trim().to_string();
+        io.print(&format!("{}", "Enter path to PASSWORD list: ".yellow()));
+        io.flush();
+        let path = io.read_line();
+        selected_profile.passlist = path.trim().to_string();
     }
 
     Some(BruteConfig {
@@ -188,7 +232,12 @@ pub fn configure_brute_force(target_input: &str, use_proxy: bool, executor: &dyn
     })
 }
 
-pub fn execute_brute_force(config: BruteConfig, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn execute_brute_force(
+    config: BruteConfig,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     // 7. Setup Output
     let safe_target = config.target.replace("://", "_").replace('/', "_");
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -197,16 +246,24 @@ pub fn execute_brute_force(config: BruteConfig, use_proxy: bool, executor: &dyn 
     let output_file = format!("{}/hydra.txt", output_dir);
 
     // If port differs from default, append it to protocol
-    let protocol_str = if !config.port.is_empty() && is_non_standard_port(&config.protocol, &config.port) {
-         format!("{}://{}:{}", config.protocol, config.target, config.port)
-    } else {
-         format!("{}://{}", config.protocol, config.target)
-    };
-    
-    io.println(&format!("{}", format!("\n[+] Starting Hydra on {}", protocol_str).green()));
+    let protocol_str =
+        if !config.port.is_empty() && is_non_standard_port(&config.protocol, &config.port) {
+            format!("{}://{}:{}", config.protocol, config.target, config.port)
+        } else {
+            format!("{}://{}", config.protocol, config.target)
+        };
+
+    io.println(&format!(
+        "{}",
+        format!("\n[+] Starting Hydra on {}", protocol_str).green()
+    ));
     io.println(&format!("[+] Saving output to: {}", output_file));
 
-    let user_arg = if config.profile.name.contains("Single User") { "-l".to_string() } else { "-L".to_string() };
+    let user_arg = if config.profile.name.contains("Single User") {
+        "-l".to_string()
+    } else {
+        "-L".to_string()
+    };
     let pass_arg = "-P".to_string();
 
     // 8. Execute
@@ -221,16 +278,16 @@ pub fn execute_brute_force(config: BruteConfig, use_proxy: bool, executor: &dyn 
         &config.target,
         &config.protocol,
         &config.port,
-        use_proxy
+        use_proxy,
     );
     let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
 
     let status = executor.execute_streamed(
-        &final_cmd, 
-        &final_args_str, 
-        "", 
-        None, 
-        Box::new(|line| io.println(line))
+        &final_cmd,
+        &final_args_str,
+        "",
+        None,
+        Box::new(|line| io.println(line)),
     );
 
     match status {
@@ -238,30 +295,50 @@ pub fn execute_brute_force(config: BruteConfig, use_proxy: bool, executor: &dyn 
             if s.success() {
                 if let Ok(content) = fs::read_to_string(&output_file) {
                     if !content.trim().is_empty() {
-                         io.println(&format!("{}", "\n[+] Credentials Found!".green().bold()));
-                         io.println(&content);
-                         let _ = append_history(&HistoryEntry::new("BruteForce", &config.target, "CRACKED"));
+                        io.println(&format!("{}", "\n[+] Credentials Found!".green().bold()));
+                        io.println(&content);
+                        let _ = append_history(&HistoryEntry::new(
+                            "BruteForce",
+                            &config.target,
+                            "CRACKED",
+                        ));
                     } else {
-                         io.println(&format!("{}", "\n[-] No credentials found.".yellow()));
-                         let _ = append_history(&HistoryEntry::new("BruteForce", &config.target, "Failed"));
+                        io.println(&format!("{}", "\n[-] No credentials found.".yellow()));
+                        let _ = append_history(&HistoryEntry::new(
+                            "BruteForce",
+                            &config.target,
+                            "Failed",
+                        ));
                     }
                 }
             } else {
-                io.println(&format!("{}", "\n[!] Hydra failed or was interrupted.".yellow()));
+                io.println(&format!(
+                    "{}",
+                    "\n[!] Hydra failed or was interrupted.".yellow()
+                ));
             }
-        },
+        }
         Err(e) => io.println(&format!("{} {}", "[!] Failed to start process:".red(), e)),
     }
 }
 
 // Backward compatibility wrapper
-pub fn run_brute_force(target_input: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn run_brute_force(
+    target_input: &str,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     if let Some(config) = configure_brute_force(target_input, use_proxy, executor, io) {
         execute_brute_force(config, use_proxy, executor, io);
     }
 }
 
-fn select_target_or_scan(use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<String> {
+fn select_target_or_scan(
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) -> Option<String> {
     let nmap_dir = Path::new("scans").join("nmap");
     let mut targets: Vec<String> = Vec::new();
 
@@ -271,7 +348,7 @@ fn select_target_or_scan(use_proxy: bool, executor: &dyn CommandExecutor, io: &d
                 if let Ok(ft) = entry.file_type() {
                     if ft.is_dir() {
                         if let Ok(name) = entry.file_name().into_string() {
-                             targets.push(name);
+                            targets.push(name);
                         }
                     }
                 }
@@ -292,8 +369,16 @@ fn select_target_or_scan(use_proxy: bool, executor: &dyn CommandExecutor, io: &d
     let scan_option_idx = targets.len() + 1;
     let manual_option_idx = targets.len() + 2;
 
-    io.println(&format!("[{}] {}", scan_option_idx, "New Target (Run Nmap Scan first)".green()));
-    io.println(&format!("[{}] {}", manual_option_idx, "New Target (Manual Input)".yellow()));
+    io.println(&format!(
+        "[{}] {}",
+        scan_option_idx,
+        "New Target (Run Nmap Scan first)".green()
+    ));
+    io.println(&format!(
+        "[{}] {}",
+        manual_option_idx,
+        "New Target (Manual Input)".yellow()
+    ));
     io.println("[0] Back");
 
     io.print("\nSelect option: ");
@@ -301,7 +386,9 @@ fn select_target_or_scan(use_proxy: bool, executor: &dyn CommandExecutor, io: &d
     let input = io.read_line();
     let choice = input.trim().parse::<usize>().unwrap_or(999);
 
-    if choice == 0 { return None; }
+    if choice == 0 {
+        return None;
+    }
 
     if choice > 0 && choice <= targets.len() {
         return Some(targets[choice - 1].clone());
@@ -309,16 +396,23 @@ fn select_target_or_scan(use_proxy: bool, executor: &dyn CommandExecutor, io: &d
         io.print("\nEnter Target IP for Scan: ");
         io.flush();
         let new_target = io.read_line().trim().to_string();
-        if new_target.is_empty() { return None; }
-        
-        io.println(&format!("{}", "\n[+] Redirecting to Network Scan module...".blue()));
+        if new_target.is_empty() {
+            return None;
+        }
+
+        io.println(&format!(
+            "{}",
+            "\n[+] Redirecting to Network Scan module...".blue()
+        ));
         nmap::run_nmap_scan(&new_target, None, false, None, use_proxy, executor, io);
         return Some(new_target);
     } else if choice == manual_option_idx {
         io.print("Enter Target IP: ");
         io.flush();
         let manual = io.read_line().trim().to_string();
-        if manual.is_empty() { return None; }
+        if manual.is_empty() {
+            return None;
+        }
         return Some(manual);
     }
 
@@ -333,7 +427,9 @@ fn detect_services(target: &str, io: &dyn IoHandler) -> Vec<report::ServiceInfo>
     let target_safe = target.replace('/', "_");
     let scan_dir = Path::new("scans").join("nmap").join(&target_safe);
 
-    if !scan_dir.exists() { return Vec::new(); }
+    if !scan_dir.exists() {
+        return Vec::new();
+    }
 
     // Find XML
     let mut xml_path: Option<PathBuf> = None;
@@ -348,17 +444,17 @@ fn detect_services(target: &str, io: &dyn IoHandler) -> Vec<report::ServiceInfo>
 
     if let Some(path) = xml_path {
         if let Ok(content) = fs::read_to_string(path) {
-             let hosts = report::parse_nmap_xml(&content, io);
-             // Flatten services from all hosts (usually just one)
-             let mut all_services = Vec::new();
-             for h in hosts {
-                 for s in h.services {
-                     if !s.name.is_empty() && s.name != "unknown" {
-                         all_services.push(s);
-                     }
-                 }
-             }
-             return all_services;
+            let hosts = report::parse_nmap_xml(&content, io);
+            // Flatten services from all hosts (usually just one)
+            let mut all_services = Vec::new();
+            for h in hosts {
+                for s in h.services {
+                    if !s.name.is_empty() && s.name != "unknown" {
+                        all_services.push(s);
+                    }
+                }
+            }
+            return all_services;
         }
     }
     Vec::new()
@@ -366,15 +462,25 @@ fn detect_services(target: &str, io: &dyn IoHandler) -> Vec<report::ServiceInfo>
 
 fn manual_protocol_selection(io: &dyn IoHandler) -> String {
     io.println(&format!("\n{}", "Select Target Protocol:".blue().bold()));
-    let protocols = vec!["ssh", "ftp", "telnet", "rdp", "mysql", "postgresql", "smb", "http-get", "http-post-form"];
+    let protocols = vec![
+        "ssh",
+        "ftp",
+        "telnet",
+        "rdp",
+        "mysql",
+        "postgresql",
+        "smb",
+        "http-get",
+        "http-post-form",
+    ];
     for (i, p) in protocols.iter().enumerate() {
         io.println(&format!("[{}] {}", i + 1, p));
     }
-    
+
     io.print(&format!("\nChoose protocol [1-{}]: ", protocols.len()));
     io.flush();
     let p_in = io.read_line();
-    
+
     if let Ok(idx) = p_in.trim().parse::<usize>() {
         if idx > 0 && idx <= protocols.len() {
             protocols[idx - 1].to_string()
@@ -397,7 +503,7 @@ fn is_non_standard_port(proto: &str, port: &str) -> bool {
         "rdp" => port != "3389",
         "mysql" => port != "3306",
         "postgresql" => port != "5432",
-        _ => true
+        _ => true,
     }
 }
 
@@ -421,7 +527,7 @@ pub fn build_hydra_command(
     target: &str,
     protocol: &str,
     port: &str,
-    use_proxy: bool
+    use_proxy: bool,
 ) -> (String, Vec<String>) {
     let mut cmd_args: Vec<String> = flags.iter().map(|s| s.to_string()).collect();
 
@@ -433,7 +539,7 @@ pub fn build_hydra_command(
 
     cmd_args.push("-o".to_string());
     cmd_args.push(output_file.to_string());
-    
+
     // Port argument
     if !port.is_empty() && is_non_standard_port(protocol, port) {
         cmd_args.push("-s".to_string());

@@ -1,14 +1,14 @@
-use crate::tool_model::{ToolInput, ToolProfile};
 use crate::io_handler::IoHandler;
-use colored::*;
+use crate::tool_model::{ToolInput, ToolProfile};
 use crate::validation::validate_target;
+use colored::*;
 
 /// Abstraction for gathering tool parameters.
 /// Allows swapping CLI prompts with API payloads or Config files.
 pub trait InputProvider {
     /// Resolve a standard ToolInput (Target, Interface, etc.)
     fn resolve(&self, input: &ToolInput) -> Option<String>;
-    
+
     /// Resolve a generic text prompt
     fn resolve_text(&self, label: &str, default: Option<&str>) -> Option<String>;
 
@@ -30,7 +30,11 @@ impl<'a> CliInputProvider<'a> {
     }
 
     fn prompt_styled(&self, label: &str) -> String {
-        self.io.print(&format!("\n{} {}", label.cyan().bold(), ">>".bright_magenta().bold().blink()));
+        self.io.print(&format!(
+            "\n{} {}",
+            label.cyan().bold(),
+            ">>".bright_magenta().bold().blink()
+        ));
         self.io.flush();
         self.io.read_line().trim().to_string()
     }
@@ -48,7 +52,7 @@ impl<'a> InputProvider for CliInputProvider<'a> {
 
         loop {
             let val = self.prompt_styled(label);
-            
+
             if val.is_empty() {
                 if label.contains("Optional") || label.contains("Leave empty") {
                     return Some(String::new());
@@ -57,12 +61,13 @@ impl<'a> InputProvider for CliInputProvider<'a> {
                 // If it's just required, loop again
                 continue;
             }
-            
+
             // Validation Logic
             if matches!(input, ToolInput::Target) {
                 if let Err(e) = validate_target(&val) {
-                     self.io.println(&format!("{} {}", "[!] Invalid Target:".red(), e));
-                     continue;
+                    self.io
+                        .println(&format!("{} {}", "[!] Invalid Target:".red(), e));
+                    continue;
                 }
             }
 
@@ -81,7 +86,7 @@ impl<'a> InputProvider for CliInputProvider<'a> {
         } else {
             label.to_string()
         };
-        
+
         let val = self.prompt_styled(&prompt);
         if val.is_empty() {
             return default.map(|s| s.to_string());
@@ -90,11 +95,19 @@ impl<'a> InputProvider for CliInputProvider<'a> {
     }
 
     fn select_profile(&self, profiles: &[ToolProfile]) -> Option<usize> {
-        if profiles.is_empty() { return None; }
-        
-        self.io.println(&format!("\n{}", "Select Profile:".blue().bold()));
+        if profiles.is_empty() {
+            return None;
+        }
+
+        self.io
+            .println(&format!("\n{}", "Select Profile:".blue().bold()));
         for (i, p) in profiles.iter().enumerate() {
-            self.io.println(&format!("[{}] {} - {}", i + 1, p.name.green(), p.description));
+            self.io.println(&format!(
+                "[{}] {} - {}",
+                i + 1,
+                p.name.green(),
+                p.description
+            ));
         }
 
         let input = self.prompt_styled(&format!("Choose [1-{}]:", profiles.len()));

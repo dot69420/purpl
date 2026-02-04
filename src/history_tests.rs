@@ -1,8 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use crate::history::{HistoryEntry, append_history_to_file, load_history_from_file, print_history};
+    use crate::history::{
+        HistoryEntry, append_history_to_file, load_history_from_file, print_history,
+    };
     use crate::io_handler::MockIoHandler;
+    use std::fs;
 
     // Helper to create a temporary file path
     // We don't have uuid, but we can generate a random number if rand is available,
@@ -10,7 +12,10 @@ mod tests {
     // Looking at Cargo.toml, we don't have rand.
     // We can use std::time
     fn get_temp_file_path_simple(suffix: &str) -> String {
-        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         format!("/tmp/test_history_{}_{}.json", suffix, timestamp)
     }
 
@@ -53,10 +58,10 @@ mod tests {
 
     #[test]
     fn test_load_non_existent_file() {
-         let file_path = get_temp_file_path_simple("non_existent");
-         let loaded = load_history_from_file(&file_path);
-         assert!(loaded.is_ok());
-         assert!(loaded.unwrap().is_empty());
+        let file_path = get_temp_file_path_simple("non_existent");
+        let loaded = load_history_from_file(&file_path);
+        assert!(loaded.is_ok());
+        assert!(loaded.unwrap().is_empty());
     }
 
     #[test]

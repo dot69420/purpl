@@ -6,23 +6,41 @@ use std::thread;
 use std::time::Duration;
 
 #[cfg(test)]
-use std::sync::Mutex;
-#[cfg(test)]
 use std::io::Cursor;
+#[cfg(test)]
+use std::sync::Mutex;
 
 pub trait CommandExecutor: Sync + Send {
     fn execute(&self, program: &str, args: &[&str]) -> io::Result<ExitStatus>;
-    fn execute_with_input(&self, program: &str, args: &[&str], input: &str) -> io::Result<ExitStatus>;
+    fn execute_with_input(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+    ) -> io::Result<ExitStatus>;
     fn execute_output(&self, program: &str, args: &[&str]) -> io::Result<Output>;
     fn execute_silent(&self, program: &str, args: &[&str]) -> io::Result<ExitStatus>;
     fn spawn_stdout(&self, program: &str, args: &[&str]) -> io::Result<Box<dyn BufRead + Send>>;
     fn is_root(&self) -> bool;
-    
+
     // New method for cancellable execution
-    fn execute_cancellable(&self, program: &str, args: &[&str], input: &str, token: Option<Arc<AtomicBool>>) -> io::Result<ExitStatus>;
+    fn execute_cancellable(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+        token: Option<Arc<AtomicBool>>,
+    ) -> io::Result<ExitStatus>;
 
     // New method for streaming output capture
-    fn execute_streamed(&self, program: &str, args: &[&str], input: &str, token: Option<Arc<AtomicBool>>, on_stdout: Box<dyn Fn(&str) + Send + Sync + '_>) -> io::Result<ExitStatus>;
+    fn execute_streamed(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+        token: Option<Arc<AtomicBool>>,
+        on_stdout: Box<dyn Fn(&str) + Send + Sync + '_>,
+    ) -> io::Result<ExitStatus>;
 }
 
 pub struct ShellExecutor;
@@ -32,14 +50,17 @@ impl CommandExecutor for ShellExecutor {
         self.execute_cancellable(program, args, "", None)
     }
 
-    fn execute_with_input(&self, program: &str, args: &[&str], input: &str) -> io::Result<ExitStatus> {
+    fn execute_with_input(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+    ) -> io::Result<ExitStatus> {
         self.execute_cancellable(program, args, input, None)
     }
 
     fn execute_output(&self, program: &str, args: &[&str]) -> io::Result<Output> {
-        Command::new(program)
-            .args(args)
-            .output()
+        Command::new(program).args(args).output()
     }
 
     fn execute_silent(&self, program: &str, args: &[&str]) -> io::Result<ExitStatus> {
@@ -56,7 +77,9 @@ impl CommandExecutor for ShellExecutor {
             .stdout(Stdio::piped())
             .spawn()?;
 
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Could not capture stdout"))?;
 
         Ok(Box::new(BufReader::new(stdout)))
@@ -66,7 +89,13 @@ impl CommandExecutor for ShellExecutor {
         unsafe { libc::geteuid() == 0 }
     }
 
-    fn execute_cancellable(&self, program: &str, args: &[&str], input: &str, token: Option<Arc<AtomicBool>>) -> io::Result<ExitStatus> {
+    fn execute_cancellable(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+        token: Option<Arc<AtomicBool>>,
+    ) -> io::Result<ExitStatus> {
         let mut child = Command::new(program)
             .args(args)
             .stdin(Stdio::piped())
@@ -89,7 +118,10 @@ impl CommandExecutor for ShellExecutor {
                         if t.load(Ordering::SeqCst) {
                             let _ = child.kill();
                             let _ = child.wait(); // Reap zombie
-                            return Err(io::Error::new(io::ErrorKind::Interrupted, "Process cancelled"));
+                            return Err(io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                "Process cancelled",
+                            ));
                         }
                         thread::sleep(Duration::from_millis(100));
                     }
@@ -101,7 +133,14 @@ impl CommandExecutor for ShellExecutor {
         }
     }
 
-    fn execute_streamed(&self, program: &str, args: &[&str], input: &str, token: Option<Arc<AtomicBool>>, on_stdout: Box<dyn Fn(&str) + Send + Sync + '_>) -> io::Result<ExitStatus> {
+    fn execute_streamed(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+        token: Option<Arc<AtomicBool>>,
+        on_stdout: Box<dyn Fn(&str) + Send + Sync + '_>,
+    ) -> io::Result<ExitStatus> {
         let mut child = Command::new(program)
             .args(args)
             .stdin(Stdio::piped())
@@ -125,20 +164,23 @@ impl CommandExecutor for ShellExecutor {
                         // Also print to real stdout for CLI feedback
                         println!("{}", l);
                     }
-                    Err(_) => break, 
+                    Err(_) => break,
                 }
             }
         }
 
         if let Some(t) = token {
-             loop {
+            loop {
                 match child.try_wait() {
                     Ok(Some(status)) => return Ok(status),
                     Ok(None) => {
-                         if t.load(Ordering::SeqCst) {
+                        if t.load(Ordering::SeqCst) {
                             let _ = child.kill();
                             let _ = child.wait();
-                            return Err(io::Error::new(io::ErrorKind::Interrupted, "Process cancelled"));
+                            return Err(io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                "Process cancelled",
+                            ));
                         }
                         thread::sleep(Duration::from_millis(100));
                     }
@@ -157,7 +199,9 @@ pub struct DockerExecutor {
 
 impl DockerExecutor {
     pub fn new(image: &str) -> Self {
-        Self { image: image.to_string() }
+        Self {
+            image: image.to_string(),
+        }
     }
 
     fn build_args<'a>(&self, program: &'a str, args: &[&'a str]) -> Vec<String> {
@@ -176,7 +220,7 @@ impl DockerExecutor {
             self.image.clone(),
             program.to_string(),
         ];
-        
+
         docker_args.extend(args.iter().map(|s| s.to_string()));
         docker_args
     }
@@ -187,7 +231,12 @@ impl CommandExecutor for DockerExecutor {
         self.execute_cancellable(program, args, "", None)
     }
 
-    fn execute_with_input(&self, program: &str, args: &[&str], input: &str) -> io::Result<ExitStatus> {
+    fn execute_with_input(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+    ) -> io::Result<ExitStatus> {
         self.execute_cancellable(program, args, input, None)
     }
 
@@ -210,13 +259,15 @@ impl CommandExecutor for DockerExecutor {
     fn spawn_stdout(&self, program: &str, args: &[&str]) -> io::Result<Box<dyn BufRead + Send>> {
         let docker_args = self.build_args(program, args);
         let final_args: Vec<&str> = docker_args.iter().map(|s| s.as_str()).collect();
-        
+
         let mut child = Command::new("docker")
             .args(&final_args)
             .stdout(Stdio::piped())
             .spawn()?;
 
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Could not capture stdout"))?;
 
         Ok(Box::new(BufReader::new(stdout)))
@@ -227,7 +278,13 @@ impl CommandExecutor for DockerExecutor {
         true
     }
 
-    fn execute_cancellable(&self, program: &str, args: &[&str], input: &str, token: Option<Arc<AtomicBool>>) -> io::Result<ExitStatus> {
+    fn execute_cancellable(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+        token: Option<Arc<AtomicBool>>,
+    ) -> io::Result<ExitStatus> {
         let docker_args = self.build_args(program, args);
         let final_args: Vec<&str> = docker_args.iter().map(|s| s.as_str()).collect();
 
@@ -253,7 +310,10 @@ impl CommandExecutor for DockerExecutor {
                         if t.load(Ordering::SeqCst) {
                             let _ = child.kill(); // Kills docker client, --init/--rm should handle container cleanup
                             let _ = child.wait();
-                            return Err(io::Error::new(io::ErrorKind::Interrupted, "Process cancelled"));
+                            return Err(io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                "Process cancelled",
+                            ));
                         }
                         thread::sleep(Duration::from_millis(100));
                     }
@@ -265,7 +325,14 @@ impl CommandExecutor for DockerExecutor {
         }
     }
 
-    fn execute_streamed(&self, program: &str, args: &[&str], input: &str, token: Option<Arc<AtomicBool>>, on_stdout: Box<dyn Fn(&str) + Send + Sync + '_>) -> io::Result<ExitStatus> {
+    fn execute_streamed(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+        token: Option<Arc<AtomicBool>>,
+        on_stdout: Box<dyn Fn(&str) + Send + Sync + '_>,
+    ) -> io::Result<ExitStatus> {
         let docker_args = self.build_args(program, args);
         let final_args: Vec<&str> = docker_args.iter().map(|s| s.as_str()).collect();
 
@@ -288,8 +355,8 @@ impl CommandExecutor for DockerExecutor {
             for line in reader.lines() {
                 match line {
                     Ok(l) => {
-                         on_stdout(&l);
-                         println!("{}", l); // Passthrough to real term
+                        on_stdout(&l);
+                        println!("{}", l); // Passthrough to real term
                     }
                     Err(_) => break,
                 }
@@ -304,7 +371,10 @@ impl CommandExecutor for DockerExecutor {
                         if t.load(Ordering::SeqCst) {
                             let _ = child.kill();
                             let _ = child.wait();
-                            return Err(io::Error::new(io::ErrorKind::Interrupted, "Process cancelled"));
+                            return Err(io::Error::new(
+                                io::ErrorKind::Interrupted,
+                                "Process cancelled",
+                            ));
                         }
                         thread::sleep(Duration::from_millis(100));
                     }
@@ -333,7 +403,8 @@ impl HybridExecutor {
     fn select_executor(&self, program: &str) -> &dyn CommandExecutor {
         match program {
             // Tools that need hardware access or are typically local-only scripts
-            "wifite" | "hciconfig" | "hcitool" | "l2ping" | "sdptool" | "tcpdump" | "ip" | "iwconfig" | "airmon-ng" => &self.local,
+            "wifite" | "hciconfig" | "hcitool" | "l2ping" | "sdptool" | "tcpdump" | "ip"
+            | "iwconfig" | "airmon-ng" => &self.local,
             _ => &self.docker,
         }
     }
@@ -344,8 +415,14 @@ impl CommandExecutor for HybridExecutor {
         self.select_executor(program).execute(program, args)
     }
 
-    fn execute_with_input(&self, program: &str, args: &[&str], input: &str) -> io::Result<ExitStatus> {
-        self.select_executor(program).execute_with_input(program, args, input)
+    fn execute_with_input(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+    ) -> io::Result<ExitStatus> {
+        self.select_executor(program)
+            .execute_with_input(program, args, input)
     }
 
     fn execute_output(&self, program: &str, args: &[&str]) -> io::Result<Output> {
@@ -363,15 +440,30 @@ impl CommandExecutor for HybridExecutor {
     fn is_root(&self) -> bool {
         // Users using hybrid mode for Wifite should run `sudo purpl` if they want local hardware access.
         // We return true so that 'sudo' is NOT automatically prepended for Docker commands.
-        true 
+        true
     }
 
-    fn execute_cancellable(&self, program: &str, args: &[&str], input: &str, token: Option<Arc<AtomicBool>>) -> io::Result<ExitStatus> {
-        self.select_executor(program).execute_cancellable(program, args, input, token)
+    fn execute_cancellable(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+        token: Option<Arc<AtomicBool>>,
+    ) -> io::Result<ExitStatus> {
+        self.select_executor(program)
+            .execute_cancellable(program, args, input, token)
     }
 
-    fn execute_streamed(&self, program: &str, args: &[&str], input: &str, token: Option<Arc<AtomicBool>>, on_stdout: Box<dyn Fn(&str) + Send + Sync + '_>) -> io::Result<ExitStatus> {
-        self.select_executor(program).execute_streamed(program, args, input, token, on_stdout)
+    fn execute_streamed(
+        &self,
+        program: &str,
+        args: &[&str],
+        input: &str,
+        token: Option<Arc<AtomicBool>>,
+        on_stdout: Box<dyn Fn(&str) + Send + Sync + '_>,
+    ) -> io::Result<ExitStatus> {
+        self.select_executor(program)
+            .execute_streamed(program, args, input, token, on_stdout)
     }
 }
 
@@ -430,7 +522,10 @@ impl MockExecutor {
     }
 
     pub fn register(&self, program: &str, behavior: MockBehavior) {
-        self.registry.lock().unwrap().insert(program.to_string(), behavior);
+        self.registry
+            .lock()
+            .unwrap()
+            .insert(program.to_string(), behavior);
     }
 
     pub fn register_success(&self, program: &str) {
@@ -469,7 +564,12 @@ impl CommandExecutor for MockExecutor {
         self.execute_cancellable(program, args, "", None)
     }
 
-    fn execute_with_input(&self, program: &str, args: &[&str], _input: &str) -> io::Result<ExitStatus> {
+    fn execute_with_input(
+        &self,
+        program: &str,
+        args: &[&str],
+        _input: &str,
+    ) -> io::Result<ExitStatus> {
         self.execute_cancellable(program, args, _input, None)
     }
 
@@ -495,14 +595,22 @@ impl CommandExecutor for MockExecutor {
         let output = self.get_behavior(program).output.stdout;
         let output_str = String::from_utf8_lossy(&output).to_string();
 
-        Ok(Box::new(BufReader::new(Cursor::new(output_str.into_bytes()))))
+        Ok(Box::new(BufReader::new(Cursor::new(
+            output_str.into_bytes(),
+        ))))
     }
 
     fn is_root(&self) -> bool {
         self.root_status
     }
 
-    fn execute_cancellable(&self, program: &str, args: &[&str], _input: &str, _token: Option<Arc<AtomicBool>>) -> io::Result<ExitStatus> {
+    fn execute_cancellable(
+        &self,
+        program: &str,
+        args: &[&str],
+        _input: &str,
+        _token: Option<Arc<AtomicBool>>,
+    ) -> io::Result<ExitStatus> {
         self.expected_calls.lock().unwrap().push(ExecutedCall {
             command: program.to_string(),
             args: args.iter().map(|s| s.to_string()).collect(),
@@ -511,7 +619,14 @@ impl CommandExecutor for MockExecutor {
         Ok(self.get_behavior(program).status)
     }
 
-    fn execute_streamed(&self, program: &str, args: &[&str], _input: &str, _token: Option<Arc<AtomicBool>>, _on_stdout: Box<dyn Fn(&str) + Send + Sync + '_>) -> io::Result<ExitStatus> {
+    fn execute_streamed(
+        &self,
+        program: &str,
+        args: &[&str],
+        _input: &str,
+        _token: Option<Arc<AtomicBool>>,
+        _on_stdout: Box<dyn Fn(&str) + Send + Sync + '_>,
+    ) -> io::Result<ExitStatus> {
         self.execute(program, args)
     }
 }

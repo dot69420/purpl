@@ -1,4 +1,5 @@
 use std::io::{self, Write};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 pub trait IoHandler: Send + Sync {
@@ -99,7 +100,7 @@ impl IoHandler for MockIoHandler {
             format!("{} ", prompt)
         };
         self.print(&prompt_text);
-        
+
         let input = self.read_line();
         let trimmed = input.trim();
         if trimmed.is_empty() {
@@ -109,8 +110,6 @@ impl IoHandler for MockIoHandler {
         }
     }
 }
-
-use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct CapturingIoHandler {
@@ -129,6 +128,26 @@ impl CapturingIoHandler {
     pub fn get_output(&self) -> String {
         self.output.lock().unwrap().clone()
     }
+
+    fn enforce_limit(&self, out: &mut String) {
+        // Target size: 1MB. Trigger cleanup at 1.5MB to amortize cost.
+        const TARGET_SIZE: usize = 1024 * 1024;
+        const CLEANUP_THRESHOLD: usize = TARGET_SIZE + (512 * 1024);
+
+        if out.len() > CLEANUP_THRESHOLD {
+            let remove_count = out.len() - TARGET_SIZE;
+            let mut cut_index = remove_count;
+            // Ensure we don't split a character
+            while !out.is_char_boundary(cut_index) && cut_index < out.len() {
+                cut_index += 1;
+            }
+            if cut_index < out.len() {
+                out.drain(..cut_index);
+            } else {
+                out.clear();
+            }
+        }
+    }
 }
 
 impl IoHandler for CapturingIoHandler {
@@ -136,6 +155,7 @@ impl IoHandler for CapturingIoHandler {
         let mut out = self.output.lock().unwrap();
         out.push_str(msg);
         out.push('\n');
+        self.enforce_limit(&mut out);
         if self.passthrough {
             println!("{}", msg);
         }
@@ -144,6 +164,7 @@ impl IoHandler for CapturingIoHandler {
     fn print(&self, msg: &str) {
         let mut out = self.output.lock().unwrap();
         out.push_str(msg);
+        self.enforce_limit(&mut out);
         if self.passthrough {
             print!("{}", msg);
             let _ = io::stdout().flush();
@@ -158,15 +179,61 @@ impl IoHandler for CapturingIoHandler {
 
     fn read_line(&self) -> String {
         // Background jobs don't support input directly.
-        // For testing, we might need a way to mock input for CapturingIoHandler,
-        // but for now, it returns empty, effectively making interactive steps fail/skip
-        // in a captured background context.
         String::new()
     }
 
     fn read_input(&self, _prompt: &str, default: Option<&str>) -> String {
-        // Similar to read_line, background jobs generally don't take interactive input.
-        // Return default if available, otherwise empty.
         default.unwrap_or("").to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_capturing_io_handler_bounded_growth() {
+        let handler = CapturingIoHandler::new(false);
+        let chunk = "a".repeat(1024); // 1KB
+        let iterations = 10_000; // 10MB total
+        for _ in 0..iterations {
+            handler.print(&chunk);
+        }
+
+        // With the limit enforcement, the size should not exceed ~1.5MB + chunk size significantly
+        let output = handler.get_output();
+        let len = output.len();
+
+        // Assert that we are within reasonable bounds (e.g. < 2MB)
+        assert!(
+            len < 2 * 1024 * 1024,
+            "Buffer size {} exceeded expected limit",
+            len
+        );
+    }
+
+    #[test]
+    fn test_capturing_io_handler_rollover() {
+        let handler = CapturingIoHandler::new(false);
+        // Fill up to limit
+        let big_chunk = "x".repeat(1024 * 1024); // 1MB
+        handler.print(&big_chunk);
+
+        // Add more
+        handler.print("END");
+
+        // Trigger pruning.
+        let overflow = "y".repeat(600 * 1024); // 600KB
+        handler.print(&overflow);
+
+        let output = handler.get_output();
+        assert!(
+            output.len() <= 1024 * 1024 + 1024,
+            "Output should be close to 1MB, got {}",
+            output.len()
+        );
+
+        let expected_end = "END".to_owned() + &overflow;
+        assert!(output.ends_with(&expected_end));
     }
 }

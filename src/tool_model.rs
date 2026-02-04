@@ -26,9 +26,9 @@ pub enum MenuCategory {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ToolInput {
-    Target,      // Asks for Target IP/URL
-    Interface,   // Asks for Network Interface
-    Wordlist,    // Asks for Wordlist Path
+    Target,       // Asks for Target IP/URL
+    Interface,    // Asks for Network Interface
+    Wordlist,     // Asks for Wordlist Path
     Text(String), // Generic prompt (with label)
     None,
 }
@@ -132,7 +132,7 @@ impl Tool {
             implementation: ToolImplementation::Standard(spec),
         }
     }
-    
+
     pub fn add_placeholder() -> Self {
         Self {
             name: "[+] Add New Custom Tool".to_string(),
