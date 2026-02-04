@@ -263,59 +263,59 @@ pub fn parse_nmap_xml(content: &str, io: &dyn IoHandler) -> Vec<HostInfo> {
             services: Vec::new(),
         };
 
-        // Addresses
-        for addr in host_node.children().filter(|n| n.has_tag_name("address")) {
-            let addr_str = addr.attribute("addr").unwrap_or_default().to_string();
-            match addr.attribute("addrtype") {
-                Some("ipv4") => host.ip_v4 = Some(addr_str),
-                Some("ipv6") => host.ip_v6 = Some(addr_str),
-                Some("mac") => host.mac = Some(addr_str),
-                _ => {}
-            }
-        }
-
-        // OS
-        if let Some(os) = host_node.descendants().find(|n| n.has_tag_name("osmatch")) {
-            host.os_name = os.attribute("name").map(|s| s.to_string());
-        }
-
-        // Services
-        if let Some(ports) = host_node.descendants().find(|n| n.has_tag_name("ports")) {
-            for port in ports.children().filter(|n| n.has_tag_name("port")) {
-                let port_id = port.attribute("portid").unwrap_or("?").to_string();
-                let protocol = port.attribute("protocol").unwrap_or("?").to_string();
-
-                let mut service_name = String::from("unknown");
-                let mut service_version = String::new();
-
-                if let Some(service) = port.children().find(|n| n.has_tag_name("service")) {
-                    service_name = service.attribute("name").unwrap_or("unknown").to_string();
-                    let product = service.attribute("product").unwrap_or("");
-                    let version = service.attribute("version").unwrap_or("");
-                    if !product.is_empty() || !version.is_empty() {
-                        service_version = format!("{} {}", product, version).trim().to_string();
+        // Iterate over children once to avoid multiple descendant traversals
+        for child in host_node.children() {
+            if child.has_tag_name("address") {
+                let addr_str = child.attribute("addr").unwrap_or_default().to_string();
+                match child.attribute("addrtype") {
+                    Some("ipv4") => host.ip_v4 = Some(addr_str),
+                    Some("ipv6") => host.ip_v6 = Some(addr_str),
+                    Some("mac") => host.mac = Some(addr_str),
+                    _ => {}
+                }
+            } else if child.has_tag_name("os") {
+                if host.os_name.is_none() {
+                    if let Some(os) = child.children().find(|n| n.has_tag_name("osmatch")) {
+                        host.os_name = os.attribute("name").map(|s| s.to_string());
                     }
                 }
+            } else if child.has_tag_name("ports") {
+                for port in child.children().filter(|n| n.has_tag_name("port")) {
+                    let port_id = port.attribute("portid").unwrap_or("?").to_string();
+                    let protocol = port.attribute("protocol").unwrap_or("?").to_string();
 
-                host.services.push(ServiceInfo {
-                    port: port_id,
-                    protocol,
-                    name: service_name,
-                    version: service_version,
-                });
+                    let mut service_name = String::from("unknown");
+                    let mut service_version = String::new();
 
-                // Check for Scripts (Vulnerabilities)
-                for script in port.children().filter(|n| n.has_tag_name("script")) {
-                    let id = script.attribute("id").unwrap_or("script");
-                    let output = script.attribute("output").unwrap_or("");
-                    if !output.is_empty() {
-                        io.println(&format!(
-                            "  {} [{}]:",
-                            "  [!] Vulnerability/Script Found".red().bold(),
-                            id.yellow()
-                        ));
-                        for line in output.lines() {
-                            io.println(&format!("      {}", line.dimmed()));
+                    if let Some(service) = port.children().find(|n| n.has_tag_name("service")) {
+                        service_name = service.attribute("name").unwrap_or("unknown").to_string();
+                        let product = service.attribute("product").unwrap_or("");
+                        let version = service.attribute("version").unwrap_or("");
+                        if !product.is_empty() || !version.is_empty() {
+                            service_version = format!("{} {}", product, version).trim().to_string();
+                        }
+                    }
+
+                    host.services.push(ServiceInfo {
+                        port: port_id,
+                        protocol,
+                        name: service_name,
+                        version: service_version,
+                    });
+
+                    // Check for Scripts (Vulnerabilities)
+                    for script in port.children().filter(|n| n.has_tag_name("script")) {
+                        let id = script.attribute("id").unwrap_or("script");
+                        let output = script.attribute("output").unwrap_or("");
+                        if !output.is_empty() {
+                            io.println(&format!(
+                                "  {} [{}]:",
+                                "  [!] Vulnerability/Script Found".red().bold(),
+                                id.yellow()
+                            ));
+                            for line in output.lines() {
+                                io.println(&format!("      {}", line.dimmed()));
+                            }
                         }
                     }
                 }
