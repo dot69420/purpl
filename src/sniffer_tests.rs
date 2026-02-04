@@ -178,4 +178,37 @@ mod tests {
         // Fallback
         assert_eq!(detect_protocol("", "Random payload"), "TCP/IP Raw");
     }
+
+    #[test]
+    fn test_extract_readable() {
+        use crate::sniffer::extract_readable;
+
+        let payload = "Short\nLong enough line\nAlso OK\n123\n";
+        // "Short" (5 chars) -> Keep
+        // "Long enough line" (16 chars) -> Keep
+        // "Also OK" (7 chars) -> Keep
+        // "123" (3 chars) -> Discard (<= 3 check: if buffer.len() > 3)
+
+        let result = extract_readable(payload);
+
+        assert!(result.contains("Short"));
+        assert!(result.contains("Long enough line"));
+        assert!(result.contains("Also OK"));
+        // "123" is stripped, so it should not be present as a line
+        assert!(!result.contains("123\n"));
+        // Verify it didn't just merge with previous
+        assert_eq!(result, "Short\nLong enough line\nAlso OK\n");
+    }
+
+    #[test]
+    fn test_extract_readable_garbage() {
+        use crate::sniffer::extract_readable;
+
+        let payload = "\x00\x01\x02Short\x03\nValidLine\n";
+        let result = extract_readable(payload);
+
+        // "Short" (5 chars) + non-printable stripped -> Keep "Short"
+        assert!(result.contains("Short"));
+        assert!(result.contains("ValidLine"));
+    }
 }

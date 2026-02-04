@@ -430,20 +430,20 @@ pub(crate) fn detect_protocol(flags: &str, payload: &str) -> String {
     "TCP/IP Raw".to_string()
 }
 
-fn extract_readable(payload: &str) -> String {
+pub(crate) fn extract_readable(payload: &str) -> String {
     let mut clean = String::with_capacity(payload.len());
-    let mut buffer = String::new();
     for line in payload.lines() {
-        buffer.clear();
+        let start_len = clean.len();
         for c in line.chars() {
             if c.is_ascii_graphic() || c.is_ascii_whitespace() {
-                buffer.push(c);
+                clean.push(c);
             }
         }
 
-        if buffer.len() > 3 {
-            clean.push_str(&buffer);
+        if clean.len() - start_len > 3 {
             clean.push('\n');
+        } else {
+            clean.truncate(start_len);
         }
     }
     clean
