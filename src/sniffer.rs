@@ -190,27 +190,33 @@ pub fn execute_sniffer(config: SnifferConfig, _use_proxy: bool, executor: &dyn C
         let (tcpdump_cmd, tcpdump_args) = build_sniffer_command("tcpdump", &config.interface, &args, &config.profile.filter, config.use_sudo);
         let args_str: Vec<&str> = tcpdump_args.iter().map(|s| s.as_str()).collect();
 
-        let reader = executor.spawn_stdout(&tcpdump_cmd, &args_str).expect("Failed to run tcpdump");
+        let mut reader = executor.spawn_stdout(&tcpdump_cmd, &args_str).expect("Failed to run tcpdump");
         
         // We log what we see to a text report too
         let mut file = File::create(&report_file).expect("Failed to create report file");
         let mut current_packet = String::new();
+        let mut line_buffer = String::new();
 
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                if l.contains(" IP ") {
-                     if !current_packet.is_empty() {
-                         process_packet_block(&current_packet, &mut file, io);
-                         current_packet.clear();
-                     }
-                     current_packet.push_str(&l);
-                     current_packet.push('\n');
-                } else {
-                    current_packet.push_str(&l);
-                    current_packet.push('\n');
-                }
+        while let Ok(bytes_read) = reader.read_line(&mut line_buffer) {
+            if bytes_read == 0 { break; }
+
+            if line_buffer.contains(" IP ") {
+                 if !current_packet.is_empty() {
+                     process_packet_block(&current_packet, &mut file, io);
+                     current_packet.clear();
+                 }
+                 current_packet.push_str(&line_buffer);
+            } else {
+                current_packet.push_str(&line_buffer);
             }
+
+            // Ensure newline if missing (e.g. EOF) to match original behavior
+            if !current_packet.ends_with('\n') {
+                current_packet.push('\n');
+            }
+            line_buffer.clear();
         }
+
         if !current_packet.is_empty() {
              process_packet_block(&current_packet, &mut file, io);
         }
