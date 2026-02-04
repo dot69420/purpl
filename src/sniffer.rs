@@ -1,12 +1,12 @@
-use std::io::{BufRead, Write};
-use std::fs::{self, File};
-use std::sync::OnceLock;
+use crate::executor::CommandExecutor;
+use crate::history::{HistoryEntry, append_history};
+use crate::io_handler::IoHandler;
 use chrono::Local;
 use colored::*;
 use regex::Regex;
-use crate::history::{append_history, HistoryEntry};
-use crate::executor::CommandExecutor;
-use crate::io_handler::IoHandler;
+use std::fs::{self, File};
+use std::io::{BufRead, Write};
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone)]
 pub struct SniffProfile {
@@ -35,7 +35,11 @@ pub struct SnifferConfig {
     pub use_sudo: bool,
 }
 
-pub fn configure_sniffer(interface_input: &str, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<SnifferConfig> {
+pub fn configure_sniffer(
+    interface_input: &str,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) -> Option<SnifferConfig> {
     // 1. Check Root
     let mut use_sudo = false;
     if !executor.is_root() {
@@ -44,12 +48,15 @@ pub fn configure_sniffer(interface_input: &str, executor: &dyn CommandExecutor, 
             Ok(false) => {
                 io.println(&format!("{}", "[-] Root required. Exiting.".red()));
                 return None;
-            },
+            }
             Err(_) => return None,
         }
     }
 
-    io.println(&format!("\n{}", "--- Packet Sniffer Module (Tcpdump) ---".magenta().bold()));
+    io.println(&format!(
+        "\n{}",
+        "--- Packet Sniffer Module (Tcpdump) ---".magenta().bold()
+    ));
 
     // 2. Select Interface
     let interface = if interface_input.is_empty() {
@@ -67,38 +74,43 @@ pub fn configure_sniffer(interface_input: &str, executor: &dyn CommandExecutor, 
         SniffProfile::new(
             "All Traffic",
             "Capture everything. Good for overview.",
-            "", 
-            &["-v"]
+            "",
+            &["-v"],
         ),
         SniffProfile::new(
             "HTTP/FTP/Telnet",
             "Focus on plaintext credentials (port 80, 21, 23).",
             "tcp port 80 or tcp port 21 or tcp port 23",
-            &["-v", "-A"]
+            &["-v", "-A"],
         ),
         SniffProfile::new(
             "DNS Traffic",
             "Monitor DNS queries (port 53).",
             "udp port 53",
-            &["-v"]
+            &["-v"],
         ),
         SniffProfile::new(
             "ICMP (Ping)",
             "Watch for ping requests/replies.",
             "icmp",
-            &["-v"]
+            &["-v"],
         ),
         SniffProfile::new(
             "Custom Filter",
             "Enter your own BPF filter syntax.",
             "",
-            &["-v"]
+            &["-v"],
         ),
     ];
 
     io.println(&format!("\n{}", "Select Capture Filter:".blue().bold()));
     for (i, profile) in profiles.iter().enumerate() {
-        io.println(&format!("[{}] {} - {}", i + 1, profile.name.green(), profile.description));
+        io.println(&format!(
+            "[{}] {} - {}",
+            i + 1,
+            profile.name.green(),
+            profile.description
+        ));
     }
 
     io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
@@ -124,13 +136,13 @@ pub fn configure_sniffer(interface_input: &str, executor: &dyn CommandExecutor, 
     io.println(&format!("\n{}", "Select Operation Mode:".blue().bold()));
     io.println("[1] Passive Capture (Save to .pcap file)");
     io.println("[2] Live Analysis (Print parsed traffic to screen)");
-    
+
     io.print("\nSelect mode [1-2]: ");
     io.flush();
     let mode_in = io.read_line();
     let mode = match mode_in.trim() {
         "2" => "live",
-        _ => "capture"
+        _ => "capture",
     };
 
     Some(SnifferConfig {
@@ -141,23 +153,35 @@ pub fn configure_sniffer(interface_input: &str, executor: &dyn CommandExecutor, 
     })
 }
 
-pub fn execute_sniffer(config: SnifferConfig, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn execute_sniffer(
+    config: SnifferConfig,
+    _use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     // 5. Setup Output
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let output_dir = format!("scans/packets/{}", date);
     fs::create_dir_all(&output_dir).expect("Failed to create output dir");
-    
+
     let pcap_file = format!("{}/capture.pcap", output_dir);
     let report_file = format!("{}/report.txt", output_dir);
 
-    io.println(&format!("{}", format!("\n[+] Starting {} on {}", config.profile.name, config.interface).green()));
+    io.println(&format!(
+        "{}",
+        format!(
+            "\n[+] Starting {} on {}",
+            config.profile.name, config.interface
+        )
+        .green()
+    ));
     if !config.profile.filter.is_empty() {
         io.println(&format!("    Filter: {}", config.profile.filter.cyan()));
     }
 
     if config.mode == "capture" {
         io.println(&format!("[+] Saving packets to: {}", pcap_file));
-        
+
         let mut args = vec!["-i", &config.interface, "-w", &pcap_file];
         if !config.profile.filter.is_empty() {
             args.push(&config.profile.filter);
@@ -176,36 +200,53 @@ pub fn execute_sniffer(config: SnifferConfig, _use_proxy: bool, executor: &dyn C
         let _ = executor.execute(cmd, &final_args); // This blocks until Ctrl+C usually
 
         io.println(&format!("\n{}", "Capture saved.".green()));
-        let _ = append_history(&HistoryEntry::new("Sniffer (PCAP)", &config.interface, &pcap_file));
-
+        let _ = append_history(&HistoryEntry::new(
+            "Sniffer (PCAP)",
+            &config.interface,
+            &pcap_file,
+        ));
     } else {
         // LIVE MODE
         io.println("[+] Live parsing... Press Ctrl+C to stop.");
-        
+
         // Ensure -l (buffered) and -A (ascii) are present for live parsing
         let mut args = config.profile.args.clone();
-        if !args.contains(&"-l") { args.push("-l"); }
-        if !args.contains(&"-A") { args.push("-A"); } // Force ASCII for live view
-        
-        let (tcpdump_cmd, tcpdump_args) = build_sniffer_command("tcpdump", &config.interface, &args, &config.profile.filter, config.use_sudo);
+        if !args.contains(&"-l") {
+            args.push("-l");
+        }
+        if !args.contains(&"-A") {
+            args.push("-A");
+        } // Force ASCII for live view
+
+        let (tcpdump_cmd, tcpdump_args) = build_sniffer_command(
+            "tcpdump",
+            &config.interface,
+            &args,
+            &config.profile.filter,
+            config.use_sudo,
+        );
         let args_str: Vec<&str> = tcpdump_args.iter().map(|s| s.as_str()).collect();
 
-        let mut reader = executor.spawn_stdout(&tcpdump_cmd, &args_str).expect("Failed to run tcpdump");
-        
+        let mut reader = executor
+            .spawn_stdout(&tcpdump_cmd, &args_str)
+            .expect("Failed to run tcpdump");
+
         // We log what we see to a text report too
         let mut file = File::create(&report_file).expect("Failed to create report file");
         let mut current_packet = String::new();
         let mut line_buffer = String::new();
 
         while let Ok(bytes_read) = reader.read_line(&mut line_buffer) {
-            if bytes_read == 0 { break; }
+            if bytes_read == 0 {
+                break;
+            }
 
             if line_buffer.contains(" IP ") {
-                 if !current_packet.is_empty() {
-                     process_packet_block(&current_packet, &mut file, io);
-                     current_packet.clear();
-                 }
-                 current_packet.push_str(&line_buffer);
+                if !current_packet.is_empty() {
+                    process_packet_block(&current_packet, &mut file, io);
+                    current_packet.clear();
+                }
+                current_packet.push_str(&line_buffer);
             } else {
                 current_packet.push_str(&line_buffer);
             }
@@ -218,45 +259,67 @@ pub fn execute_sniffer(config: SnifferConfig, _use_proxy: bool, executor: &dyn C
         }
 
         if !current_packet.is_empty() {
-             process_packet_block(&current_packet, &mut file, io);
+            process_packet_block(&current_packet, &mut file, io);
         }
-        
+
         io.println(&format!("{}", "Analysis finished.".yellow()));
-        let _ = append_history(&HistoryEntry::new("Sniffer (Live)", &config.interface, "Finished"));
+        let _ = append_history(&HistoryEntry::new(
+            "Sniffer (Live)",
+            &config.interface,
+            "Finished",
+        ));
     }
 }
 
 // Wrapper
-pub fn run_sniffer(interface_input: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn run_sniffer(
+    interface_input: &str,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     if let Some(config) = configure_sniffer(interface_input, executor, io) {
         execute_sniffer(config, use_proxy, executor, io);
     }
 }
 
-fn select_interface(use_sudo: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<String> {
+fn select_interface(
+    use_sudo: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) -> Option<String> {
     let cmd = if use_sudo { "sudo" } else { "ip" };
-    let args = if use_sudo { vec!["ip", "link", "show"] } else { vec!["link", "show"] };
+    let args = if use_sudo {
+        vec!["ip", "link", "show"]
+    } else {
+        vec!["link", "show"]
+    };
 
     if let Ok(output) = executor.execute_output(cmd, &args) {
         let out_str = String::from_utf8_lossy(&output.stdout);
         let mut interfaces = Vec::new();
-        
+
         for line in out_str.lines() {
             // parsing lines like: "1: lo: <LOOPBACK..."
             if let Some(start) = line.find(": ") {
-                if let Some(end) = line[start+2..].find(": ") {
-                    let iface = line[start+2 .. start+2+end].trim();
+                if let Some(end) = line[start + 2..].find(": ") {
+                    let iface = line[start + 2..start + 2 + end].trim();
                     interfaces.push(iface.to_string());
                 }
             }
         }
 
         if interfaces.is_empty() {
-            io.println(&format!("{}", "[-] No interfaces found via 'ip link'.".yellow()));
+            io.println(&format!(
+                "{}",
+                "[-] No interfaces found via 'ip link'.".yellow()
+            ));
             io.print("Enter interface manually: ");
             io.flush();
             let manual = io.read_line().trim().to_string();
-            if manual.is_empty() { return None; }
+            if manual.is_empty() {
+                return None;
+            }
             return Some(manual);
         }
 
@@ -272,23 +335,27 @@ fn select_interface(use_sudo: bool, executor: &dyn CommandExecutor, io: &dyn IoH
         let choice = input.trim().parse::<usize>().unwrap_or(999);
 
         if choice == 0 {
-             io.print("Enter interface manually: ");
-             io.flush();
-             let manual = io.read_line().trim().to_string();
-             if manual.is_empty() { return None; }
-             return Some(manual);
+            io.print("Enter interface manually: ");
+            io.flush();
+            let manual = io.read_line().trim().to_string();
+            if manual.is_empty() {
+                return None;
+            }
+            return Some(manual);
         }
 
         if choice > 0 && choice <= interfaces.len() {
             return Some(interfaces[choice - 1].clone());
         }
     }
-    
+
     // Fallback if command fails
     io.print("Enter interface manually: ");
     io.flush();
     let manual = io.read_line().trim().to_string();
-    if manual.is_empty() { return None; }
+    if manual.is_empty() {
+        return None;
+    }
     Some(manual)
 }
 
@@ -297,19 +364,26 @@ fn process_packet_block(block: &str, file: &mut File, io: &dyn IoHandler) {
     let re_header = RE_HEADER.get_or_init(|| {
         Regex::new(r"(\d{2}:\d{2}:\d{2}\.\d+)\sIP\s([\w\.-]+)\s>\s([\w\.-]+):\s(.*)").unwrap()
     });
-    
+
     let lines: Vec<&str> = block.lines().collect();
-    if lines.is_empty() { return; }
+    if lines.is_empty() {
+        return;
+    }
 
     let header = lines[0];
-    
+
     if let Some(caps) = re_header.captures(header) {
         let time = &caps[1];
         let src = &caps[2];
         let dst = &caps[3];
         let flags = &caps[4];
 
-        let payload: String = lines.iter().skip(1).cloned().collect::<Vec<&str>>().join("\n");
+        let payload: String = lines
+            .iter()
+            .skip(1)
+            .cloned()
+            .collect::<Vec<&str>>()
+            .join("\n");
         let content_type = detect_protocol(flags, &payload);
         let clean_payload = extract_readable(&payload);
 
@@ -333,18 +407,15 @@ fn process_packet_block(block: &str, file: &mut File, io: &dyn IoHandler) {
 
 pub(crate) fn detect_protocol(flags: &str, payload: &str) -> String {
     static RE_HTTP: OnceLock<Regex> = OnceLock::new();
-    let re_http = RE_HTTP.get_or_init(|| {
-        Regex::new(r"HTTP/|GET |POST ").expect("Invalid HTTP regex")
-    });
+    let re_http =
+        RE_HTTP.get_or_init(|| Regex::new(r"HTTP/|GET |POST ").expect("Invalid HTTP regex"));
 
     if re_http.is_match(payload) {
         return "HTTP (Unencrypted)".to_string();
     }
 
     static RE_CRED: OnceLock<Regex> = OnceLock::new();
-    let re_cred = RE_CRED.get_or_init(|| {
-        Regex::new(r"USER |PASS ").expect("Invalid CRED regex")
-    });
+    let re_cred = RE_CRED.get_or_init(|| Regex::new(r"USER |PASS ").expect("Invalid CRED regex"));
 
     if re_cred.is_match(payload) {
         return "FTP/Telnet (Credentials)".to_string();
@@ -369,7 +440,7 @@ fn extract_readable(payload: &str) -> String {
                 buffer.push(c);
             }
         }
-        
+
         if buffer.len() > 3 {
             clean.push_str(&buffer);
             clean.push('\n');
@@ -383,12 +454,12 @@ pub fn build_sniffer_command(
     interface: &str,
     args: &[&str],
     filter: &str,
-    use_sudo: bool
+    use_sudo: bool,
 ) -> (String, Vec<String>) {
     let mut final_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     final_args.push("-i".to_string());
     final_args.push(interface.to_string());
-    
+
     // For live analysis helper, usually needs unbuffered
     if !final_args.contains(&"-l".to_string()) {
         final_args.push("-l".to_string());
@@ -397,9 +468,9 @@ pub fn build_sniffer_command(
     if !filter.is_empty() {
         final_args.push(filter.to_string());
     }
-    
+
     let mut final_cmd = base_cmd.to_string();
-    
+
     if use_sudo {
         final_args.insert(0, final_cmd.to_string());
         final_cmd = "sudo".to_string();

@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::wifi::{build_wifite_command, WifiProfile, run_wifi_audit};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
-
+    use crate::wifi::{WifiProfile, build_wifite_command, run_wifi_audit};
 
     #[test]
     fn test_run_wifi_audit_logic() {
@@ -26,7 +25,7 @@ mod tests {
         run_wifi_audit("wlan0", false, &executor, &io);
 
         let calls = executor.get_calls();
-        // 9 calls total: 
+        // 9 calls total:
         // 1. airmon check
         // 2. ip down
         // 3. macchanger

@@ -1,9 +1,9 @@
-use std::fs;
-use std::path::Path;
+use crate::io_handler::IoHandler;
 use colored::*;
 use roxmltree::Document;
 use serde::Deserialize;
-use crate::io_handler::IoHandler;
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct ServiceInfo {
@@ -31,7 +31,12 @@ pub struct WifiteReport {
 }
 
 pub fn display_scan_report(scan_dir: &Path, io: &dyn IoHandler) {
-    io.println(&format!("{}", format!("\n--- Report for: {} ---", scan_dir.display()).blue().bold()));
+    io.println(&format!(
+        "{}",
+        format!("\n--- Report for: {} ---", scan_dir.display())
+            .blue()
+            .bold()
+    ));
     let mut any_report_found = false;
 
     // 1. Look for Nmap XML files
@@ -43,11 +48,21 @@ pub fn display_scan_report(scan_dir: &Path, io: &dyn IoHandler) {
                     let content = match fs::read_to_string(&path) {
                         Ok(c) => c,
                         Err(e) => {
-                            io.println(&format!("{}", format!("[!] Failed to read file: {}", e).red()));
+                            io.println(&format!(
+                                "{}",
+                                format!("[!] Failed to read file: {}", e).red()
+                            ));
                             continue;
                         }
                     };
-                    io.println(&format!("{}", format!("\nParsing Nmap Report: {}", path.file_name().unwrap().to_string_lossy()).cyan()));
+                    io.println(&format!(
+                        "{}",
+                        format!(
+                            "\nParsing Nmap Report: {}",
+                            path.file_name().unwrap().to_string_lossy()
+                        )
+                        .cyan()
+                    ));
                     let hosts = parse_nmap_xml(&content, io);
                     print_nmap_hosts(hosts, io);
                     any_report_found = true;
@@ -70,15 +85,21 @@ pub fn display_scan_report(scan_dir: &Path, io: &dyn IoHandler) {
     };
 
     if let Some(path) = wifite_final_path {
-        io.println(&format!("{}", format!("\nParsing Wifite Report: {}", path.display()).cyan()));
-         match fs::read_to_string(&path) {
+        io.println(&format!(
+            "{}",
+            format!("\nParsing Wifite Report: {}", path.display()).cyan()
+        ));
+        match fs::read_to_string(&path) {
             Ok(content) => {
-                 let entries = parse_wifite_json(&content, io);
-                 print_wifite_report(entries, io);
-                 any_report_found = true;
-            },
+                let entries = parse_wifite_json(&content, io);
+                print_wifite_report(entries, io);
+                any_report_found = true;
+            }
             Err(e) => {
-                io.println(&format!("{}", format!("[!] Failed to read file: {}", e).red()));
+                io.println(&format!(
+                    "{}",
+                    format!("[!] Failed to read file: {}", e).red()
+                ));
             }
         }
     }
@@ -131,19 +152,38 @@ pub fn display_scan_report(scan_dir: &Path, io: &dyn IoHandler) {
 }
 
 fn print_text_report(path: &Path, io: &dyn IoHandler, title: &str) {
-    io.println(&format!("{}", format!("\nReading {}: {}", title, path.file_name().unwrap().to_string_lossy()).magenta()));
+    io.println(&format!(
+        "{}",
+        format!(
+            "\nReading {}: {}",
+            title,
+            path.file_name().unwrap().to_string_lossy()
+        )
+        .magenta()
+    ));
     io.println(&"-".repeat(60));
-    
+
     match fs::read_to_string(path) {
         Ok(content) => {
             io.println(&content);
-        },
-        Err(e) => io.println(&format!("{} {}", "[!] Failed to read report file:".red(), e)),
+        }
+        Err(e) => io.println(&format!(
+            "{} {}",
+            "[!] Failed to read report file:".red(),
+            e
+        )),
     }
 }
 
 fn print_gobuster_report(path: &Path, io: &dyn IoHandler) {
-    io.println(&format!("{}", format!("\nParsing Web Enumeration Report: {}", path.file_name().unwrap().to_string_lossy()).cyan()));
+    io.println(&format!(
+        "{}",
+        format!(
+            "\nParsing Web Enumeration Report: {}",
+            path.file_name().unwrap().to_string_lossy()
+        )
+        .cyan()
+    ));
     io.println(&"-".repeat(60));
 
     match fs::read_to_string(path) {
@@ -159,13 +199,21 @@ fn print_gobuster_report(path: &Path, io: &dyn IoHandler) {
                     io.println(line);
                 }
             }
-        },
+        }
         Err(e) => io.println(&format!("{} {}", "[!] Failed to read file:".red(), e)),
     }
 }
 
 fn print_hydra_report(path: &Path, io: &dyn IoHandler) {
-    io.println(&format!("{}", format!("\nParsing Credential Access Report: {}", path.file_name().unwrap().to_string_lossy()).red().bold()));
+    io.println(&format!(
+        "{}",
+        format!(
+            "\nParsing Credential Access Report: {}",
+            path.file_name().unwrap().to_string_lossy()
+        )
+        .red()
+        .bold()
+    ));
     io.println(&"-".repeat(60));
 
     match fs::read_to_string(path) {
@@ -174,16 +222,20 @@ fn print_hydra_report(path: &Path, io: &dyn IoHandler) {
                 io.println(&format!("{}", "[-] No credentials found in file.".yellow()));
                 return;
             }
-            
+
             for line in content.lines() {
                 // Hydra output format usually contains "login:" and "password:"
                 if line.contains("login:") && line.contains("password:") {
-                     io.println(&format!("  {} {}", "[CRACKED]".red().bold().blink(), line.green()));
+                    io.println(&format!(
+                        "  {} {}",
+                        "[CRACKED]".red().bold().blink(),
+                        line.green()
+                    ));
                 } else {
-                     io.println(line);
+                    io.println(line);
                 }
             }
-        },
+        }
         Err(e) => io.println(&format!("{} {}", "[!] Failed to read file:".red(), e)),
     }
 }
@@ -192,7 +244,10 @@ pub fn parse_nmap_xml(content: &str, io: &dyn IoHandler) -> Vec<HostInfo> {
     let doc = match Document::parse(content) {
         Ok(d) => d,
         Err(e) => {
-            io.println(&format!("{}", format!("[!] Failed to parse XML: {}", e).red()));
+            io.println(&format!(
+                "{}",
+                format!("[!] Failed to parse XML: {}", e).red()
+            ));
             return Vec::new();
         }
     };
@@ -229,7 +284,7 @@ pub fn parse_nmap_xml(content: &str, io: &dyn IoHandler) -> Vec<HostInfo> {
             for port in ports.children().filter(|n| n.has_tag_name("port")) {
                 let port_id = port.attribute("portid").unwrap_or("?").to_string();
                 let protocol = port.attribute("protocol").unwrap_or("?").to_string();
-                
+
                 let mut service_name = String::from("unknown");
                 let mut service_version = String::new();
 
@@ -254,7 +309,11 @@ pub fn parse_nmap_xml(content: &str, io: &dyn IoHandler) -> Vec<HostInfo> {
                     let id = script.attribute("id").unwrap_or("script");
                     let output = script.attribute("output").unwrap_or("");
                     if !output.is_empty() {
-                        io.println(&format!("  {} [{}]:", "  [!] Vulnerability/Script Found".red().bold(), id.yellow()));
+                        io.println(&format!(
+                            "  {} [{}]:",
+                            "  [!] Vulnerability/Script Found".red().bold(),
+                            id.yellow()
+                        ));
                         for line in output.lines() {
                             io.println(&format!("      {}", line.dimmed()));
                         }
@@ -271,24 +330,39 @@ pub fn print_nmap_hosts(hosts: Vec<HostInfo>, io: &dyn IoHandler) {
     for host in hosts {
         // Display Host Info
         io.println(&"-".repeat(50));
-        if let Some(ip) = &host.ip_v4 { io.println(&format!("IPv4: {}", ip.green().bold())); }
-        if let Some(ip) = &host.ip_v6 { io.println(&format!("IPv6: {}", ip.green().bold())); }
-        if let Some(mac) = &host.mac { io.println(&format!("MAC:  {}", mac.yellow())); }
-        if let Some(os) = &host.os_name { io.println(&format!("OS:   {}", os.cyan())); }
+        if let Some(ip) = &host.ip_v4 {
+            io.println(&format!("IPv4: {}", ip.green().bold()));
+        }
+        if let Some(ip) = &host.ip_v6 {
+            io.println(&format!("IPv6: {}", ip.green().bold()));
+        }
+        if let Some(mac) = &host.mac {
+            io.println(&format!("MAC:  {}", mac.yellow()));
+        }
+        if let Some(os) = &host.os_name {
+            io.println(&format!("OS:   {}", os.cyan()));
+        }
 
         if !host.services.is_empty() {
-            io.println(&format!("\n  {:<10} | {:<20} | {:<30}", "PORT", "SERVICE", "VERSION"));
+            io.println(&format!(
+                "\n  {:<10} | {:<20} | {:<30}",
+                "PORT", "SERVICE", "VERSION"
+            ));
             io.println(&format!("  {}", "-".repeat(65)));
             for svc in host.services {
-                io.println(&format!("  {:<10} | {:<20} | {:<30}",
-                    format!("{}/{}", svc.port, svc.protocol), 
-                    svc.name, 
+                io.println(&format!(
+                    "  {:<10} | {:<20} | {:<30}",
+                    format!("{}/{}", svc.port, svc.protocol),
+                    svc.name,
                     svc.version
                 ));
                 // External Link for more info
                 if !svc.name.is_empty() && svc.name != "unknown" {
                     let query = format!("{} {} exploit", svc.name, svc.version);
-                    let url = format!("https://www.google.com/search?q={}", query.replace(" ", "+"));
+                    let url = format!(
+                        "https://www.google.com/search?q={}",
+                        query.replace(" ", "+")
+                    );
                     io.println(&format!("  {}: {}", "-> Info".blue().italic(), url));
                 }
             }
@@ -301,7 +375,10 @@ pub fn parse_wifite_json(content: &str, io: &dyn IoHandler) -> Vec<WifiteReport>
     match serde_json::from_str::<Vec<WifiteReport>>(content) {
         Ok(e) => e,
         Err(_) => {
-            io.println(&format!("{}", "[!] Could not parse cracked.json structure.".yellow()));
+            io.println(&format!(
+                "{}",
+                "[!] Could not parse cracked.json structure.".yellow()
+            ));
             Vec::new()
         }
     }
@@ -313,14 +390,27 @@ pub fn print_wifite_report(entries: Vec<WifiteReport>, io: &dyn IoHandler) {
         return;
     }
 
-    io.println(&format!("{:<20} | {:<15} | {:<10} | {:<20}", "ESSID", "BSSID", "ENC", "KEY"));
+    io.println(&format!(
+        "{:<20} | {:<15} | {:<10} | {:<20}",
+        "ESSID", "BSSID", "ENC", "KEY"
+    ));
     io.println(&"-".repeat(70));
     for entry in entries {
-        io.println(&format!("{:<20} | {:<15} | {:<10} | {:<20}",
-            entry.essid.green(), 
-            entry.bssid, 
-            entry.encryption.clone().unwrap_or_else(|| "???".to_string()).yellow(),
-            entry.key.clone().unwrap_or_else(|| "N/A".to_string()).red().bold()
+        io.println(&format!(
+            "{:<20} | {:<15} | {:<10} | {:<20}",
+            entry.essid.green(),
+            entry.bssid,
+            entry
+                .encryption
+                .clone()
+                .unwrap_or_else(|| "???".to_string())
+                .yellow(),
+            entry
+                .key
+                .clone()
+                .unwrap_or_else(|| "N/A".to_string())
+                .red()
+                .bold()
         ));
     }
 }

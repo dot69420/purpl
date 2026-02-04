@@ -1,32 +1,37 @@
 use super::*;
+use crate::executor::MockExecutor;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use crate::executor::MockExecutor;
 
 #[test]
 fn test_spawn_and_complete_job() {
     let job_manager = JobManager::new();
     let executor = Arc::new(MockExecutor::new());
 
-    job_manager.spawn_job("Test Job", |_, io, _| {
-        io.println("Job output");
-        thread::sleep(Duration::from_millis(50));
-    }, executor, true);
+    job_manager.spawn_job(
+        "Test Job",
+        |_, io, _| {
+            io.println("Job output");
+            thread::sleep(Duration::from_millis(50));
+        },
+        executor,
+        true,
+    );
 
     let jobs = job_manager.list_jobs();
     assert_eq!(jobs.len(), 1);
-    
+
     let job = &jobs[0];
     assert_eq!(job.name, "Test Job");
     assert!(job.is_running());
 
     // Wait for completion
     thread::sleep(Duration::from_millis(100));
-    
+
     let status = job.status.lock().unwrap();
     assert_eq!(*status, JobStatus::Completed);
-    
+
     let output = job.io.get_output();
     assert_eq!(output.trim(), "Job output");
 }

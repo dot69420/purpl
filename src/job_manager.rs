@@ -1,9 +1,9 @@
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use chrono::Local;
-use crate::io_handler::{IoHandler, CapturingIoHandler};
 use crate::executor::CommandExecutor;
+use crate::io_handler::{CapturingIoHandler, IoHandler};
+use chrono::Local;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobStatus {
@@ -67,23 +67,31 @@ impl JobManager {
         }
     }
 
-    pub fn spawn_job<F>(&self, name: &str, task: F, executor: Arc<dyn CommandExecutor + Send + Sync>, background: bool) -> Arc<Job>
+    pub fn spawn_job<F>(
+        &self,
+        name: &str,
+        task: F,
+        executor: Arc<dyn CommandExecutor + Send + Sync>,
+        background: bool,
+    ) -> Arc<Job>
     where
-        F: FnOnce(Arc<dyn CommandExecutor + Send + Sync>, &dyn IoHandler, Arc<Job>) + Send + 'static,
+        F: FnOnce(Arc<dyn CommandExecutor + Send + Sync>, &dyn IoHandler, Arc<Job>)
+            + Send
+            + 'static,
     {
         let mut id_lock = self.next_id.lock().unwrap();
         let id = *id_lock;
         *id_lock += 1;
 
         let job = Arc::new(Job::new(id, name, background));
-        
+
         {
             let mut jobs_lock = self.jobs.lock().unwrap();
             jobs_lock.push(job.clone());
         }
 
         let job_clone = job.clone();
-        
+
         thread::spawn(move || {
             // Task runs here
             task(executor, &job_clone.io, job_clone.clone());
@@ -98,8 +106,9 @@ impl JobManager {
                     *status = JobStatus::Completed;
                 }
             }
-            
-            *job_clone.end_time.lock().unwrap() = Some(Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+
+            *job_clone.end_time.lock().unwrap() =
+                Some(Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
         });
 
         job
@@ -108,7 +117,7 @@ impl JobManager {
     pub fn list_jobs(&self) -> Vec<Arc<Job>> {
         self.jobs.lock().unwrap().clone()
     }
-    
+
     pub fn get_job(&self, id: usize) -> Option<Arc<Job>> {
         let jobs = self.jobs.lock().unwrap();
         jobs.iter().find(|j| j.id == id).cloned()

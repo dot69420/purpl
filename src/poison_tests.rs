@@ -1,8 +1,6 @@
-use crate::poison::{run_poisoning, build_responder_command, PoisonProfile};
 use crate::executor::MockExecutor;
 use crate::io_handler::MockIoHandler;
-
-
+use crate::poison::{PoisonProfile, build_responder_command, run_poisoning};
 
 #[test]
 fn test_run_poisoning_logic() {
@@ -51,10 +49,10 @@ fn test_run_poisoning_logic_sudo() {
     // 2. responder --help (might be wrapped in sudo? No, usually dependency check is simple exec, but let's see)
     // Actually, execute_output is used for --help check. If execute_output doesn't use sudo logic inside run_poisoning (it doesn't), it runs as user.
     // 3. sudo responder ...
-    
+
     assert_eq!(calls[0].command, "sudo");
     assert_eq!(calls[0].args, vec!["-v"]);
-    
+
     // The dependency check runs as 'responder --help' without sudo.
     // MockExecutor will capture this.
     assert_eq!(calls[1].command, "responder");

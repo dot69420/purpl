@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::brute::{run_brute_force, build_hydra_command, BruteProfile};
+    use crate::brute::{BruteProfile, build_hydra_command, run_brute_force};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
-
 
     #[test]
     fn test_run_brute_force_logic() {
@@ -32,13 +31,15 @@ mod tests {
         let (cmd, args) = build_hydra_command(
             "hydra",
             &flags,
-            "-L", "users.txt",
-            "-P", "pass.txt",
+            "-L",
+            "users.txt",
+            "-P",
+            "pass.txt",
             "out.txt",
             "192.168.1.1",
             "ssh",
             "",
-            false
+            false,
         );
 
         assert_eq!(cmd, "hydra");
@@ -52,15 +53,8 @@ mod tests {
     fn test_build_hydra_command_proxy() {
         let flags = vec!["-v"];
         let (cmd, args) = build_hydra_command(
-            "hydra",
-            &flags,
-            "-l", "admin",
-            "-P", "pass.txt",
-            "out.txt",
-            "10.0.0.1",
-            "ftp",
-            "",
-            true
+            "hydra", &flags, "-l", "admin", "-P", "pass.txt", "out.txt", "10.0.0.1", "ftp", "",
+            true,
         );
 
         assert_eq!(cmd, "proxychains");

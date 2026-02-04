@@ -1,9 +1,9 @@
+use crate::executor::CommandExecutor;
+use crate::history::{HistoryEntry, append_history};
+use crate::io_handler::IoHandler;
+use chrono::Local;
 use std::fs;
 use std::path::Path;
-use chrono::Local;
-use crate::history::{append_history, HistoryEntry};
-use crate::executor::CommandExecutor;
-use crate::io_handler::IoHandler;
 
 #[derive(Debug, Clone)]
 pub struct PoisonProfile {
@@ -29,7 +29,11 @@ pub struct PoisonConfig {
     pub use_sudo: bool,
 }
 
-pub fn configure_poisoning(interface_input: &str, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<PoisonConfig> {
+pub fn configure_poisoning(
+    interface_input: &str,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) -> Option<PoisonConfig> {
     let mut use_sudo = false;
     if !executor.is_root() {
         match crate::ui::ask_and_enable_sudo(executor, io, Some("LAN Poisoning")) {
@@ -37,7 +41,7 @@ pub fn configure_poisoning(interface_input: &str, executor: &dyn CommandExecutor
             Ok(false) => {
                 io.println("[-] Root required. Exiting.");
                 return None;
-            },
+            }
             Err(_) => return None,
         }
     }
@@ -60,8 +64,16 @@ pub fn configure_poisoning(interface_input: &str, executor: &dyn CommandExecutor
 
     let profiles = vec![
         PoisonProfile::new("Analyze Mode", "Passive. Listen only.", &["-A"]),
-        PoisonProfile::new("Basic Poisoning", "Respond to LLMNR/NBT-NS.", &["-w", "-r", "-f"]),
-        PoisonProfile::new("Aggressive", "Force WPAD + DHCP.", &["-w", "-r", "-f", "--wpad", "--dhcp-wpad"]),
+        PoisonProfile::new(
+            "Basic Poisoning",
+            "Respond to LLMNR/NBT-NS.",
+            &["-w", "-r", "-f"],
+        ),
+        PoisonProfile::new(
+            "Aggressive",
+            "Force WPAD + DHCP.",
+            &["-w", "-r", "-f", "--wpad", "--dhcp-wpad"],
+        ),
     ];
 
     io.println("\nSelect Poisoning Profile:");
@@ -90,7 +102,12 @@ pub fn configure_poisoning(interface_input: &str, executor: &dyn CommandExecutor
     })
 }
 
-pub fn execute_poisoning(config: PoisonConfig, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn execute_poisoning(
+    config: PoisonConfig,
+    _use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
     let output_dir = format!("scans/poison/{}", date);
     fs::create_dir_all(&output_dir).expect("Failed to create output dir");
@@ -99,40 +116,59 @@ pub fn execute_poisoning(config: PoisonConfig, _use_proxy: bool, executor: &dyn 
     io.println(&format!("[+] Profile: {}", config.profile.name));
     io.println("[!] Press Ctrl+C to stop.");
 
-    let (responder_cmd, responder_args) = build_responder_command("responder", &config.interface, &config.profile.flags, config.use_sudo);
+    let (responder_cmd, responder_args) = build_responder_command(
+        "responder",
+        &config.interface,
+        &config.profile.flags,
+        config.use_sudo,
+    );
     let responder_args_str: Vec<&str> = responder_args.iter().map(|s| s.as_str()).collect();
 
     let status = executor.execute_streamed(
-        &responder_cmd, 
-        &responder_args_str, 
-        "", 
-        None, 
-        Box::new(|line| io.println(line))
+        &responder_cmd,
+        &responder_args_str,
+        "",
+        None,
+        Box::new(|line| io.println(line)),
     );
 
     if Path::new("logs").exists() {
-         let _ = fs::rename("logs", Path::new(&output_dir).join("logs"));
-         io.println(&format!("[+] Logs moved to {}", output_dir));
+        let _ = fs::rename("logs", Path::new(&output_dir).join("logs"));
+        io.println(&format!("[+] Logs moved to {}", output_dir));
     }
 
     match status {
         Ok(_) => {
-             let _ = append_history(&HistoryEntry::new("Poisoning", &config.interface, "Executed"));
-        },
+            let _ = append_history(&HistoryEntry::new(
+                "Poisoning",
+                &config.interface,
+                "Executed",
+            ));
+        }
         Err(e) => io.println(&format!("[!] Failed to start process: {}", e)),
     }
 }
 
-pub fn run_poisoning(interface_input: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn run_poisoning(
+    interface_input: &str,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     if let Some(config) = configure_poisoning(interface_input, executor, io) {
         execute_poisoning(config, use_proxy, executor, io);
     }
 }
 
-pub fn build_responder_command(base_cmd: &str, interface: &str, flags: &[&str], use_sudo: bool) -> (String, Vec<String>) {
+pub fn build_responder_command(
+    base_cmd: &str,
+    interface: &str,
+    flags: &[&str],
+    use_sudo: bool,
+) -> (String, Vec<String>) {
     let mut args = vec!["-I".to_string(), interface.to_string()];
     args.extend(flags.iter().map(|s| s.to_string()));
-    
+
     let mut final_cmd = base_cmd.to_string();
     if use_sudo {
         args.insert(0, final_cmd);
@@ -147,11 +183,11 @@ fn select_interface(executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Strin
     if let Ok(out) = output {
         let out_str = String::from_utf8_lossy(&out.stdout);
         let mut ifaces = Vec::new();
-        
+
         for line in out_str.lines() {
             if let Some(start) = line.find(": ") {
-                if let Some(end) = line[start+2..].find(':') {
-                    let iface = &line[start+2..start+2+end];
+                if let Some(end) = line[start + 2..].find(':') {
+                    let iface = &line[start + 2..start + 2 + end];
                     if iface != "lo" {
                         ifaces.push(iface.trim().to_string());
                     }

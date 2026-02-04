@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::nmap::{build_nmap_command, ScanProfile, run_nmap_scan};
     use crate::executor::MockExecutor;
     use crate::io_handler::MockIoHandler;
-
+    use crate::nmap::{ScanProfile, build_nmap_command, run_nmap_scan};
 
     #[test]
     fn test_run_nmap_scan_logic() {

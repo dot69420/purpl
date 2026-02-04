@@ -1,10 +1,10 @@
-use std::fs;
-use std::path::Path;
+use crate::executor::CommandExecutor;
+use crate::history::{HistoryEntry, append_history};
+use crate::io_handler::IoHandler;
 use chrono::Local;
 use colored::*;
-use crate::history::{append_history, HistoryEntry};
-use crate::executor::CommandExecutor;
-use crate::io_handler::IoHandler;
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct WifiProfile {
@@ -30,7 +30,11 @@ pub struct WifiConfig {
     pub use_sudo: bool,
 }
 
-pub fn configure_wifi(interface: &str, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> Option<WifiConfig> {
+pub fn configure_wifi(
+    interface: &str,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) -> Option<WifiConfig> {
     let mut use_sudo = false;
     if !executor.is_root() {
         match crate::ui::ask_and_enable_sudo(executor, io, Some("WiFi Audit")) {
@@ -38,14 +42,14 @@ pub fn configure_wifi(interface: &str, executor: &dyn CommandExecutor, io: &dyn 
             Ok(false) => {
                 io.println(&format!("{}", "[-] Root required. Exiting.".red()));
                 return None;
-            },
+            }
             Err(_) => return None,
         }
     }
 
     // 1. Profile Selection
     let profile = select_wifi_profile(io);
-    
+
     Some(WifiConfig {
         interface: interface.to_string(),
         profile,
@@ -53,7 +57,12 @@ pub fn configure_wifi(interface: &str, executor: &dyn CommandExecutor, io: &dyn 
     })
 }
 
-pub fn execute_wifi_audit(config: WifiConfig, _use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn execute_wifi_audit(
+    config: WifiConfig,
+    _use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     // Helper to run commands
     let run_cmd = |cmd: &str, args: &[&str], interactive: bool| {
         let mut final_cmd = cmd;
@@ -63,21 +72,32 @@ pub fn execute_wifi_audit(config: WifiConfig, _use_proxy: bool, executor: &dyn C
             final_args.insert(0, final_cmd.to_string());
             final_cmd = "sudo";
         }
-        
+
         let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
-        
+
         if interactive {
-             let _ = executor.execute(final_cmd, &final_args_str);
+            let _ = executor.execute(final_cmd, &final_args_str);
         } else {
-             let _ = executor.execute_output(final_cmd, &final_args_str);
+            let _ = executor.execute_output(final_cmd, &final_args_str);
         }
     };
 
-    io.println(&format!("{}", format!("[+] Starting WiFi Audit on {}", config.interface).green()));
-    io.println(&format!("{}", format!("\n[+] Selected Profile: {}", config.profile.name).green().bold()));
+    io.println(&format!(
+        "{}",
+        format!("[+] Starting WiFi Audit on {}", config.interface).green()
+    ));
+    io.println(&format!(
+        "{}",
+        format!("\n[+] Selected Profile: {}", config.profile.name)
+            .green()
+            .bold()
+    ));
 
     // 2. Kill interfering processes
-    io.println(&format!("{}", "[+] Killing interfering processes...".blue()));
+    io.println(&format!(
+        "{}",
+        "[+] Killing interfering processes...".blue()
+    ));
     run_cmd("airmon-ng", &["check", "kill"], false);
 
     // 3. Randomize MAC
@@ -91,26 +111,40 @@ pub fn execute_wifi_audit(config: WifiConfig, _use_proxy: bool, executor: &dyn C
     run_cmd("airmon-ng", &["start", &config.interface], false);
 
     // Find new interface name
-    let iwconfig = executor.execute_output("iwconfig", &[]).expect("Failed to run iwconfig");
+    let iwconfig = executor
+        .execute_output("iwconfig", &[])
+        .expect("Failed to run iwconfig");
     let output = String::from_utf8_lossy(&iwconfig.stdout);
-    
-    let mon_iface = output.lines()
+
+    let mon_iface = output
+        .lines()
         .find(|line| line.contains("Mode:Monitor"))
         .map(|line| line.split_whitespace().next().unwrap_or(&config.interface))
         .unwrap_or(&config.interface);
 
-    io.println(&format!("{}", format!("[+] Monitor mode enabled on: {}", mon_iface).green()));
+    io.println(&format!(
+        "{}",
+        format!("[+] Monitor mode enabled on: {}", mon_iface).green()
+    ));
 
-    io.println(&format!("\n{}", "[+] Launching Wifite... (Press Ctrl+C to stop)".yellow()));
-    
+    io.println(&format!(
+        "\n{}",
+        "[+] Launching Wifite... (Press Ctrl+C to stop)".yellow()
+    ));
+
     // 5. Execute Wifite with Profile Flags
     let profile_flags_str: Vec<&str> = config.profile.flags.iter().map(|s| s.as_str()).collect();
-    let (wifite_cmd, wifite_args) = build_wifite_command("wifite", mon_iface, &profile_flags_str, config.use_sudo);
-    
+    let (wifite_cmd, wifite_args) =
+        build_wifite_command("wifite", mon_iface, &profile_flags_str, config.use_sudo);
+
     let wifite_args_str: Vec<&str> = wifite_args.iter().map(|s| s.as_str()).collect();
     let _ = executor.execute(&wifite_cmd, &wifite_args_str);
-    
-    let _ = append_history(&HistoryEntry::new("Wifite", &config.interface, &format!("Executed: {}", config.profile.name)));
+
+    let _ = append_history(&HistoryEntry::new(
+        "Wifite",
+        &config.interface,
+        &format!("Executed: {}", config.profile.name),
+    ));
 
     // 6. Cleanup & Save Results
     io.println(&format!("\n{}", "[+] Cleaning up...".blue()));
@@ -121,24 +155,39 @@ pub fn execute_wifi_audit(config: WifiConfig, _use_proxy: bool, executor: &dyn C
     if Path::new("hs").exists() {
         let date = Local::now().format("%Y%m%d_%H%M%S").to_string();
         let scan_dir = format!("scans/wifi/{}", date);
-        
-        // We don't create the dir first because rename needs the target to either not exist 
+
+        // We don't create the dir first because rename needs the target to either not exist
         // or be an empty dir (depending on OS). Safer to rename directly.
         if let Err(e) = fs::rename("hs", &scan_dir) {
             // If rename fails (e.g. across filesystems), we try create + copy logic
             let _ = fs::create_dir_all(&scan_dir);
-            io.println(&format!("{} {} - Falling back to manual copy.", "[!] Failed to rename results:".red(), e));
+            io.println(&format!(
+                "{} {} - Falling back to manual copy.",
+                "[!] Failed to rename results:".red(),
+                e
+            ));
             // (In a production app we'd recursive copy here, but for now we notify)
         } else {
-            io.println(&format!("{}", format!("[+] Results saved to: {}", scan_dir).green()));
+            io.println(&format!(
+                "{}",
+                format!("[+] Results saved to: {}", scan_dir).green()
+            ));
         }
     } else {
-        io.println(&format!("{}", "[-] No Wifite results ('hs' folder) found.".yellow()));
+        io.println(&format!(
+            "{}",
+            "[-] No Wifite results ('hs' folder) found.".yellow()
+        ));
     }
 }
 
 // Wrapper
-pub fn run_wifi_audit(interface: &str, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
+pub fn run_wifi_audit(
+    interface: &str,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
     if let Some(config) = configure_wifi(interface, executor, io) {
         execute_wifi_audit(config, use_proxy, executor, io);
     }
@@ -150,37 +199,42 @@ fn select_wifi_profile(io: &dyn IoHandler) -> WifiProfile {
         WifiProfile::new(
             "Auto-Pwn (Default)",
             "Standard Wifite run. Scans all networks, targets everything. (Best for general audit)",
-            &["--kill"]
+            &["--kill"],
         ),
         WifiProfile::new(
             "WPS Only",
             "Focus on WPS vulnerabilities (PixieDust, PIN bruteforce). Fast & Effective.",
-            &["--wps", "--kill"]
+            &["--wps", "--kill"],
         ),
         WifiProfile::new(
             "WPA Handshake Capture",
             "Focus on capturing WPA/2 Handshakes for offline cracking.",
-            &["--wpa", "--kill"]
+            &["--wpa", "--kill"],
         ),
         WifiProfile::new(
             "5GHz Only",
             "Scan and attack only 5GHz networks (requires 5GHz capable card).",
-            &["-5", "--kill"]
+            &["-5", "--kill"],
         ),
         WifiProfile::new(
             "Target Specific",
             "Target a specific network by ESSID (Name).",
-            &["--kill"]
+            &["--kill"],
         ),
         WifiProfile::new(
             "Silent/Stealth",
             "Avoid deauth flooding where possible (Experimental).",
-            &["--no-deauths", "--kill"]
+            &["--no-deauths", "--kill"],
         ),
     ];
 
     for (i, profile) in profiles.iter().enumerate() {
-        io.println(&format!("[{}] {} - {}", i + 1, profile.name.green(), profile.description));
+        io.println(&format!(
+            "[{}] {} - {}",
+            i + 1,
+            profile.name.green(),
+            profile.description
+        ));
     }
 
     io.print(&format!("\nChoose a profile [1-{}]: ", profiles.len()));
@@ -194,11 +248,14 @@ fn select_wifi_profile(io: &dyn IoHandler) -> WifiProfile {
         }
     }
 
-    io.println(&format!("{}", "[!] Invalid selection. Defaulting to 'Auto-Pwn'.".yellow()));
+    io.println(&format!(
+        "{}",
+        "[!] Invalid selection. Defaulting to 'Auto-Pwn'.".yellow()
+    ));
     WifiProfile::new(
         "Auto-Pwn (Default)",
         "Standard Wifite run. Scans all networks, targets everything.",
-        &["--kill"]
+        &["--kill"],
     )
 }
 
@@ -212,7 +269,10 @@ fn handle_target_specific_profile(mut profile: WifiProfile, io: &dyn IoHandler) 
             profile.flags.push("-e".to_string());
             profile.flags.push(essid.to_string());
         } else {
-            io.println(&format!("{}", "[!] No ESSID provided. Reverting to default.".red()));
+            io.println(&format!(
+                "{}",
+                "[!] No ESSID provided. Reverting to default.".red()
+            ));
         }
     }
     profile
@@ -222,7 +282,7 @@ pub fn build_wifite_command(
     base_cmd: &str,
     interface: &str,
     flags: &[&str],
-    use_sudo: bool
+    use_sudo: bool,
 ) -> (String, Vec<String>) {
     let mut args: Vec<String> = vec!["-i".to_string(), interface.to_string()];
     args.extend(flags.iter().map(|s| s.to_string()));

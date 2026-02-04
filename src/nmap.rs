@@ -1,16 +1,16 @@
 use std::fs;
 use std::sync::Arc;
 
+use crate::executor::CommandExecutor;
+use crate::history::{HistoryEntry, append_history};
+use crate::io_handler::IoHandler;
+use crate::job_manager::Job;
+use crate::ui;
 use chrono::Local;
+use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
-use colored::*;
 use serde::{Deserialize, Serialize};
-use crate::history::{append_history, HistoryEntry};
-use crate::executor::CommandExecutor;
-use crate::io_handler::IoHandler;
-use crate::ui;
-use crate::job_manager::Job;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanProfile {
@@ -41,17 +41,27 @@ pub struct NmapConfig {
     pub use_sudo: bool,
 }
 
-pub fn configure_nmap(target: &str, custom_ports: Option<&str>, skip_discovery: bool, extra_args: Option<&str>, executor: &dyn CommandExecutor, io: &dyn IoHandler) -> NmapConfig {
+pub fn configure_nmap(
+    target: &str,
+    custom_ports: Option<&str>,
+    skip_discovery: bool,
+    extra_args: Option<&str>,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) -> NmapConfig {
     let is_large_network = target.ends_with("/8");
-    
+
     // Select Profile (Interactive)
     let profile = if let Some(ports) = custom_ports {
-        io.println(&format!("{}", format!("[+] Custom Port Mode: Scanning ports '{}'", ports).cyan()));
+        io.println(&format!(
+            "{}",
+            format!("[+] Custom Port Mode: Scanning ports '{}'", ports).cyan()
+        ));
         ScanProfile::new(
             "Custom Port Scan",
             "User specified ports.",
             &["-sV", "-T4"], // Base flags
-            false 
+            false,
         )
     } else {
         select_scan_profile(is_large_network, io)
@@ -66,41 +76,47 @@ pub fn configure_nmap(target: &str, custom_ports: Option<&str>, skip_discovery: 
             Ok(false) => {
                 // User declined, fallback
                 if custom_ports.is_none() {
-                     io.println(&format!("{}", "    - Switching to Connect Scan (-sT) automatically.".yellow()));
-                     return NmapConfig {
+                    io.println(&format!(
+                        "{}",
+                        "    - Switching to Connect Scan (-sT) automatically.".yellow()
+                    ));
+                    return NmapConfig {
                         target: target.to_string(),
                         profile: ScanProfile::new(
                             "Connect Scan (Fallback)",
                             "Non-root fallback. Uses full TCP handshake.",
                             &["-sT", "-sV", "--version-intensity", "5"],
-                            false
+                            false,
                         ),
                         custom_ports: custom_ports.map(|s| s.to_string()),
                         skip_discovery,
                         extra_args: extra_args.map(|s| s.to_string()),
                         use_sudo: false,
-                     };
-                 }
-            },
+                    };
+                }
+            }
             Err(_) => {
                 // Authentication failed, return fallback? Or better, just abort for clarity?
                 // Given Nmap context, falling back is user friendly.
                 if custom_ports.is_none() {
-                     io.println(&format!("{}", "    - Switching to Connect Scan (-sT) due to auth failure.".yellow()));
-                     return NmapConfig {
+                    io.println(&format!(
+                        "{}",
+                        "    - Switching to Connect Scan (-sT) due to auth failure.".yellow()
+                    ));
+                    return NmapConfig {
                         target: target.to_string(),
                         profile: ScanProfile::new(
                             "Connect Scan (Fallback)",
                             "Non-root fallback. Uses full TCP handshake.",
                             &["-sT", "-sV", "--version-intensity", "5"],
-                            false
+                            false,
                         ),
                         custom_ports: custom_ports.map(|s| s.to_string()),
                         skip_discovery,
                         extra_args: extra_args.map(|s| s.to_string()),
                         use_sudo: false,
-                     };
-                 }
+                    };
+                }
             }
         }
     }
@@ -117,14 +133,28 @@ pub fn configure_nmap(target: &str, custom_ports: Option<&str>, skip_discovery: 
 
 fn select_scan_profile(is_large_network: bool, io: &dyn IoHandler) -> ScanProfile {
     if is_large_network {
-         io.println(&format!("\n{}", "[!] Large Network Detected (Class A /8)".yellow().bold()));
-         io.println("Auto-selecting 'Mass Scan' profile to prevent timeout/hanging.");
-         return ScanProfile::new(
-             "Mass Scan",
-             "Optimized for large networks (No DNS, aggressive timing, rate limited)",
-             &["-sS", "-sV", "-O", "-T4", "--max-retries", "1", "--version-light", "-n", "--min-rate", "1000"],
-             true
-         );
+        io.println(&format!(
+            "\n{}",
+            "[!] Large Network Detected (Class A /8)".yellow().bold()
+        ));
+        io.println("Auto-selecting 'Mass Scan' profile to prevent timeout/hanging.");
+        return ScanProfile::new(
+            "Mass Scan",
+            "Optimized for large networks (No DNS, aggressive timing, rate limited)",
+            &[
+                "-sS",
+                "-sV",
+                "-O",
+                "-T4",
+                "--max-retries",
+                "1",
+                "--version-light",
+                "-n",
+                "--min-rate",
+                "1000",
+            ],
+            true,
+        );
     }
 
     io.println(&format!("\n{}", "Select Scan Profile:".blue().bold()));
@@ -132,40 +162,66 @@ fn select_scan_profile(is_large_network: bool, io: &dyn IoHandler) -> ScanProfil
         ScanProfile::new(
             "Stealth & Vuln",
             "Default. TCP SYN scan + Service/OS detection + Vulnerability scripts. (Balanced) [ROOT]",
-            &["-sS", "-sV", "-O", "--script", "vuln", "-T3", "--version-intensity", "5"],
-            true
+            &[
+                "-sS",
+                "-sV",
+                "-O",
+                "--script",
+                "vuln",
+                "-T3",
+                "--version-intensity",
+                "5",
+            ],
+            true,
         ),
         ScanProfile::new(
             "Connect Scan",
             "Non-root friendly. Uses full TCP handshake. Detects open ports/services. [NON-ROOT]",
             &["-sT", "-sV", "--version-intensity", "5"],
-            false
+            false,
         ),
         ScanProfile::new(
             "Quick Audit",
             "Fast scan. Top 100 ports + Version detection. Good for quick triage. [ROOT]",
             &["-sS", "-sV", "--top-ports", "100", "-T4"],
-            true
+            true,
         ),
         ScanProfile::new(
             "Intense Scan",
             "Very aggressive. All ports, OS, Service, Scripts, Traceroute. (Noisy & Slow) [ROOT]",
-            &["-sS", "-sV", "-O", "-p-", "--script", "default,vuln", "-A", "-T4"],
-            true
+            &[
+                "-sS",
+                "-sV",
+                "-O",
+                "-p-",
+                "--script",
+                "default,vuln",
+                "-A",
+                "-T4",
+            ],
+            true,
         ),
         ScanProfile::new(
             "Paranoid (Evasion)",
             "Slow timing to evade IDS/Firewalls. Very stealthy but takes a long time. [ROOT]",
             &["-sS", "-sV", "-T1", "-f", "--mtu", "24"],
-            true
+            true,
         ),
     ];
 
     for (i, profile) in profiles.iter().enumerate() {
-        io.println(&format!("[{}] {} - {}", i + 1, profile.name.green(), profile.description));
+        io.println(&format!(
+            "[{}] {} - {}",
+            i + 1,
+            profile.name.green(),
+            profile.description
+        ));
     }
 
-    let input = io.read_input(&format!("\nChoose a profile [1-{}]", profiles.len()), Some("1"));
+    let input = io.read_input(
+        &format!("\nChoose a profile [1-{}]", profiles.len()),
+        Some("1"),
+    );
 
     if let Ok(idx) = input.trim().parse::<usize>() {
         if idx > 0 && idx <= profiles.len() {
@@ -174,26 +230,53 @@ fn select_scan_profile(is_large_network: bool, io: &dyn IoHandler) -> ScanProfil
         }
     }
 
-    io.println(&format!("{}", "[!] Invalid selection. Defaulting to 'Stealth & Vuln'.".yellow()));
+    io.println(&format!(
+        "{}",
+        "[!] Invalid selection. Defaulting to 'Stealth & Vuln'.".yellow()
+    ));
     ScanProfile::new(
         "Stealth & Vuln",
         "Default. TCP SYN scan + Service/OS detection + Vulnerability scripts. (Balanced)",
-        &["-sS", "-sV", "-O", "--script", "vuln", "-T3", "--version-intensity", "5"],
-        true
+        &[
+            "-sS",
+            "-sV",
+            "-O",
+            "--script",
+            "vuln",
+            "-T3",
+            "--version-intensity",
+            "5",
+        ],
+        true,
     )
 }
 
-pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler, job: Option<Arc<Job>>) {
+pub fn execute_nmap_scan(
+    config: NmapConfig,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+    job: Option<Arc<Job>>,
+) {
     if use_proxy {
-        io.println(&format!("{}", "[*] Proxychains Enabled. Traffic will be routed through configured proxies.".magenta().bold()));
+        io.println(&format!(
+            "{}",
+            "[*] Proxychains Enabled. Traffic will be routed through configured proxies."
+                .magenta()
+                .bold()
+        ));
     }
 
     if config.target.ends_with("/8") {
-        io.println(&format!("{}", "[!] Warning: Class A scan detected.".yellow()));
+        io.println(&format!(
+            "{}",
+            "[!] Warning: Class A scan detected.".yellow()
+        ));
     }
 
     // Convert profile flags to Vec<String> so we can mutate them
-    let mut profile_flags: Vec<String> = config.profile.flags.iter().map(|s| s.to_string()).collect();
+    let mut profile_flags: Vec<String> =
+        config.profile.flags.iter().map(|s| s.to_string()).collect();
 
     // Apply Custom Ports
     if let Some(ports) = &config.custom_ports {
@@ -208,31 +291,46 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
 
     // Apply Extra Args to Deep Scan
     if let Some(extras) = &config.extra_args {
-         for arg in extras.split_whitespace() {
-             profile_flags.push(arg.to_string());
-         }
+        for arg in extras.split_whitespace() {
+            profile_flags.push(arg.to_string());
+        }
     }
 
     if config.use_sudo {
-         match executor.execute_output("sudo", &["-v"]) {
-             Ok(output) => {
-                 if !output.status.success() {
-                     io.println(&format!("{}", "[-] Sudo authentication failed. Aborting.".red()));
-                     let stderr_str = String::from_utf8_lossy(&output.stderr);
-                     if !stderr_str.trim().is_empty() {
-                         io.println(&format!("{}", format!("    Error: {}", stderr_str.trim()).red()));
-                     }
-                     return;
-                 }
-             },
-             Err(e) => {
-                 io.println(&format!("{} {}", "[!] Failed to execute sudo for authentication check:".red(), e));
-                 return;
-             }
-         }
+        match executor.execute_output("sudo", &["-v"]) {
+            Ok(output) => {
+                if !output.status.success() {
+                    io.println(&format!(
+                        "{}",
+                        "[-] Sudo authentication failed. Aborting.".red()
+                    ));
+                    let stderr_str = String::from_utf8_lossy(&output.stderr);
+                    if !stderr_str.trim().is_empty() {
+                        io.println(&format!(
+                            "{}",
+                            format!("    Error: {}", stderr_str.trim()).red()
+                        ));
+                    }
+                    return;
+                }
+            }
+            Err(e) => {
+                io.println(&format!(
+                    "{} {}",
+                    "[!] Failed to execute sudo for authentication check:".red(),
+                    e
+                ));
+                return;
+            }
+        }
     }
-    
-    io.println(&format!("{}", format!("\n[+] Selected Profile: {}", config.profile.name).green().bold()));
+
+    io.println(&format!(
+        "{}",
+        format!("\n[+] Selected Profile: {}", config.profile.name)
+            .green()
+            .bold()
+    ));
     io.println(&format!("    {}", config.profile.description));
     if let Some(e) = &config.extra_args {
         io.println(&format!("    Extra Args: {}", e.cyan()));
@@ -243,36 +341,50 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
     let output_dir = format!("scans/nmap/{}/{}", safe_target, date);
 
     if let Err(e) = fs::create_dir_all(&output_dir) {
-        io.println(&format!("{} {}", "[!] Failed to create output directory:".red(), e));
+        io.println(&format!(
+            "{} {}",
+            "[!] Failed to create output directory:".red(),
+            e
+        ));
         return;
     }
 
-    io.println(&format!("{}", format!("[+] Starting Scan for {}", config.target).green()));
+    io.println(&format!(
+        "{}",
+        format!("[+] Starting Scan for {}", config.target).green()
+    ));
     io.println(&format!("[+] Results will be saved to {}", output_dir));
 
     // Step 1: Host Discovery
-    io.println(&format!("\n{}", "[1] Running Host Discovery...".blue().bold()));
+    io.println(&format!(
+        "\n{}",
+        "[1] Running Host Discovery...".blue().bold()
+    ));
     // Note: We avoid ProgressBar in execute if it might run in background?
     // Actually, background capture handles text fine, but progress bars might look messy in logs.
     // Ideally, we conditionally use progress bar or just log.
     // For now, let's keep it simple.
-    
+
     let spinner = ProgressBar::new_spinner();
-    spinner.set_style(ProgressStyle::default_spinner().template("{spinner:.green} {msg}").unwrap());
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
     spinner.set_message("Discovering hosts...");
     spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
     let host_file = format!("{}/host_discovery.txt", output_dir);
-    
+
     let mut discovery_args = Vec::new();
     let mut has_discovery_override = false;
 
     if let Some(extras) = &config.extra_args {
-         if extras.contains("-sn") || extras.contains("-P") {
-             has_discovery_override = true;
-         }
+        if extras.contains("-sn") || extras.contains("-P") {
+            has_discovery_override = true;
+        }
     }
-    
+
     let is_large_network = config.target.ends_with("/8");
     let is_root = executor.is_root();
 
@@ -284,22 +396,29 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
             discovery_args.push("-sn");
             if is_large_network {
                 discovery_args.extend_from_slice(&[
-                    "-n", "--max-retries", "1", "--min-rate", "1000", "-T4", 
-                    "-PE", "-PS443", "-PA80"
+                    "-n",
+                    "--max-retries",
+                    "1",
+                    "--min-rate",
+                    "1000",
+                    "-T4",
+                    "-PE",
+                    "-PS443",
+                    "-PA80",
                 ]);
             } else {
                 discovery_args.extend_from_slice(&["-PE", "-PP", "-PM"]);
             }
         } else {
-            discovery_args.extend_from_slice(&["-sn", "-PS80,443,22,8080"]); 
+            discovery_args.extend_from_slice(&["-sn", "-PS80,443,22,8080"]);
         }
     }
-    
+
     // Add extra args to discovery too, if they are relevant.
     if let Some(extras) = &config.extra_args {
-         for arg in extras.split_whitespace() {
-             discovery_args.push(arg);
-         }
+        for arg in extras.split_whitespace() {
+            discovery_args.push(arg);
+        }
     }
 
     discovery_args.push(&config.target);
@@ -343,7 +462,8 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
     // Parse Alive Hosts
     let content = fs::read_to_string(&host_file).unwrap_or_default();
     let re = Regex::new(r"Nmap scan report for ([\w\.-]+)").unwrap();
-    let alive_hosts: Vec<String> = re.captures_iter(&content)
+    let alive_hosts: Vec<String> = re
+        .captures_iter(&content)
         .map(|cap| cap[1].to_string())
         .collect();
 
@@ -353,16 +473,21 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
         return;
     }
 
-    io.println(&format!("{}", format!("[+] Found {} alive hosts.", alive_hosts.len()).green()));
+    io.println(&format!(
+        "{}",
+        format!("[+] Found {} alive hosts.", alive_hosts.len()).green()
+    ));
 
     // Step 2: Deep Scan
     io.println(&format!("\n{}", "[2] Starting Deep Scans...".blue().bold()));
-    
+
     let bar = ProgressBar::new(alive_hosts.len() as u64);
-    bar.set_style(ProgressStyle::default_bar()
-        .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
-        .unwrap()
-        .progress_chars("=>-"));
+    bar.set_style(
+        ProgressStyle::default_bar()
+            .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("=>-"),
+    );
     bar.set_message("Scanning hosts...");
     bar.enable_steady_tick(std::time::Duration::from_secs(1));
 
@@ -390,15 +515,23 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
                     match host {
                         Some(h) => {
                             let scan_file = format!("{}/scan_{}", output_dir, h);
-                            let (final_cmd, final_args) = build_nmap_command("nmap", &scan_flags_str, &h, &scan_file, use_proxy, config.use_sudo);
-                            let final_args_str: Vec<&str> = final_args.iter().map(|s| s.as_str()).collect();
+                            let (final_cmd, final_args) = build_nmap_command(
+                                "nmap",
+                                &scan_flags_str,
+                                &h,
+                                &scan_file,
+                                use_proxy,
+                                config.use_sudo,
+                            );
+                            let final_args_str: Vec<&str> =
+                                final_args.iter().map(|s| s.as_str()).collect();
 
                             let _ = executor.execute_streamed(
-                                &final_cmd, 
-                                &final_args_str, 
-                                "", 
+                                &final_cmd,
+                                &final_args_str,
+                                "",
                                 job.as_ref().map(|j| j.cancelled.clone()),
-                                Box::new(|line| io.println(line))
+                                Box::new(|line| io.println(line)),
                             );
                             bar.inc(1);
                         }
@@ -411,21 +544,42 @@ pub fn execute_nmap_scan(config: NmapConfig, use_proxy: bool, executor: &dyn Com
 
     if let Some(j) = &job {
         if j.is_cancelled() {
-             io.println(&format!("{}", "\n[!] Scan cancelled by user.".yellow().bold()));
-             bar.finish_with_message("Cancelled");
-             let _ = append_history(&HistoryEntry::new("Nmap", &config.target, "Cancelled"));
-             return;
+            io.println(&format!(
+                "{}",
+                "\n[!] Scan cancelled by user.".yellow().bold()
+            ));
+            bar.finish_with_message("Cancelled");
+            let _ = append_history(&HistoryEntry::new("Nmap", &config.target, "Cancelled"));
+            return;
         }
     }
 
     bar.finish_with_message("All scans complete!");
-    io.println(&format!("{}", format!("\n[+] Scan completed. Results in {}", output_dir).green()));
+    io.println(&format!(
+        "{}",
+        format!("\n[+] Scan completed. Results in {}", output_dir).green()
+    ));
     let _ = append_history(&HistoryEntry::new("Nmap", &config.target, "Success"));
 }
 
 // Deprecated wrapper for backward compatibility if needed, but we should update callers
-pub fn run_nmap_scan(target: &str, custom_ports: Option<&str>, skip_discovery: bool, extra_args: Option<&str>, use_proxy: bool, executor: &dyn CommandExecutor, io: &dyn IoHandler) {
-    let config = configure_nmap(target, custom_ports, skip_discovery, extra_args, executor, io);
+pub fn run_nmap_scan(
+    target: &str,
+    custom_ports: Option<&str>,
+    skip_discovery: bool,
+    extra_args: Option<&str>,
+    use_proxy: bool,
+    executor: &dyn CommandExecutor,
+    io: &dyn IoHandler,
+) {
+    let config = configure_nmap(
+        target,
+        custom_ports,
+        skip_discovery,
+        extra_args,
+        executor,
+        io,
+    );
     execute_nmap_scan(config, use_proxy, executor, io, None);
 }
 
@@ -435,7 +589,7 @@ pub fn build_nmap_command(
     target: &str,
     output_file: &str,
     use_proxy: bool,
-    use_sudo: bool
+    use_sudo: bool,
 ) -> (String, Vec<String>) {
     let mut scan_args: Vec<String> = flags.iter().map(|s| s.to_string()).collect();
     scan_args.push(target.to_string());
