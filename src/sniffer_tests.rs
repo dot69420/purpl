@@ -140,4 +140,27 @@ mod tests {
         assert_eq!(profile.filter, "filter");
         assert_eq!(profile.args, vec!["-a"]);
     }
+
+    #[test]
+    fn test_detect_protocol_cases() {
+        use crate::sniffer::detect_protocol;
+
+        // HTTP
+        assert_eq!(detect_protocol("", "GET / HTTP/1.1"), "HTTP (Unencrypted)");
+        assert_eq!(detect_protocol("", "POST /login HTTP/1.1"), "HTTP (Unencrypted)");
+        assert_eq!(detect_protocol("", "Some header\nHTTP/1.1 200 OK"), "HTTP (Unencrypted)");
+
+        // Credentials
+        assert_eq!(detect_protocol("", "USER admin"), "FTP/Telnet (Credentials)");
+        assert_eq!(detect_protocol("", "PASS secret"), "FTP/Telnet (Credentials)");
+
+        // DNS (Flags)
+        assert_eq!(detect_protocol("UDP domain", ""), "DNS");
+
+        // TCP SYN
+        assert_eq!(detect_protocol("Flags [S]", ""), "TCP SYN");
+
+        // Fallback
+        assert_eq!(detect_protocol("", "Random payload"), "TCP/IP Raw");
+    }
 }
