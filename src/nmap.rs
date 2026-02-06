@@ -494,7 +494,21 @@ pub fn execute_nmap_scan(
     let hosts_queue = std::sync::Mutex::new(alive_hosts);
     let num_threads = if is_large_network { 10 } else { 4 };
 
-    let scan_flags_str: Vec<&str> = profile_flags.iter().map(|s| s.as_str()).collect();
+    // Pre-calculate base command and arguments
+    let mut common_flags = profile_flags.clone();
+    let mut base_cmd_str = "nmap".to_string();
+
+    if use_proxy {
+        common_flags.insert(0, base_cmd_str);
+        base_cmd_str = "proxychains".to_string();
+    }
+
+    if config.use_sudo {
+        common_flags.insert(0, base_cmd_str);
+        base_cmd_str = "sudo".to_string();
+    }
+
+    let common_args_refs: Vec<&str> = common_flags.iter().map(|s| s.as_str()).collect();
 
     std::thread::scope(|s| {
         for _ in 0..num_threads {
@@ -515,19 +529,16 @@ pub fn execute_nmap_scan(
                     match host {
                         Some(h) => {
                             let scan_file = format!("{}/scan_{}", output_dir, h);
-                            let (final_cmd, final_args) = build_nmap_command(
-                                "nmap",
-                                &scan_flags_str,
-                                &h,
-                                &scan_file,
-                                use_proxy,
-                                config.use_sudo,
-                            );
-                            let final_args_str: Vec<&str> =
-                                final_args.iter().map(|s| s.as_str()).collect();
+
+                            // Efficient argument construction
+                            let mut final_args_str = Vec::with_capacity(common_args_refs.len() + 3);
+                            final_args_str.extend_from_slice(&common_args_refs);
+                            final_args_str.push(&h);
+                            final_args_str.push("-oA");
+                            final_args_str.push(&scan_file);
 
                             let _ = executor.execute_streamed(
-                                &final_cmd,
+                                &base_cmd_str,
                                 &final_args_str,
                                 "",
                                 job.as_ref().map(|j| j.cancelled.clone()),
@@ -583,6 +594,7 @@ pub fn run_nmap_scan(
     execute_nmap_scan(config, use_proxy, executor, io, None);
 }
 
+#[allow(dead_code)]
 pub fn build_nmap_command(
     base_cmd: &str,
     flags: &[&str],
