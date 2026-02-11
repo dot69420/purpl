@@ -2,7 +2,7 @@ use crate::io_handler::IoHandler;
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::path::Path;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -30,17 +30,44 @@ pub fn append_history(entry: &HistoryEntry) -> io::Result<()> {
 }
 
 pub fn append_history_to_file(entry: &HistoryEntry, file_path: &str) -> io::Result<()> {
-    let mut history = load_history_from_file(file_path)?;
-    history.push(entry.clone());
+    if is_legacy_format(file_path) {
+        let mut history = load_history_from_file(file_path)?;
+        history.push(entry.clone());
 
-    let json = serde_json::to_string_pretty(&history)?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(file_path)?;
-    file.write_all(json.as_bytes())?;
+        let mut file = fs::File::create(file_path)?;
+        for item in history {
+            let json = serde_json::to_string(&item)?;
+            writeln!(file, "{}", json)?;
+        }
+    } else {
+        let json = serde_json::to_string(entry)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(file_path)?;
+        writeln!(file, "{}", json)?;
+    }
     Ok(())
+}
+
+fn is_legacy_format(file_path: &str) -> bool {
+    if let Ok(file) = fs::File::open(file_path) {
+        let mut reader = BufReader::new(file);
+        // Skip whitespace to find the first meaningful character
+        let mut buf = [0; 1];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(1) => {
+                    if !buf[0].is_ascii_whitespace() {
+                        return buf[0] == b'[';
+                    }
+                }
+                _ => return false, // EOF or Error
+            }
+        }
+    }
+    false
 }
 
 pub fn load_history() -> io::Result<Vec<HistoryEntry>> {
@@ -60,9 +87,22 @@ pub fn load_history_from_file(file_path: &str) -> io::Result<Vec<HistoryEntry>> 
         return Ok(Vec::new());
     }
 
-    match serde_json::from_str(&content) {
-        Ok(h) => Ok(h),
-        Err(_) => Ok(Vec::new()), // Return empty if corrupted
+    // Check if it's a JSON array (legacy)
+    if content.trim_start().starts_with('[') {
+        match serde_json::from_str(&content) {
+            Ok(h) => Ok(h),
+            Err(_) => Ok(Vec::new()), // Return empty if corrupted
+        }
+    } else {
+        // Assume JSONL
+        let mut history = Vec::new();
+        for line in content.lines() {
+            if line.trim().is_empty() { continue; }
+            if let Ok(entry) = serde_json::from_str::<HistoryEntry>(line) {
+                history.push(entry);
+            }
+        }
+        Ok(history)
     }
 }
 
