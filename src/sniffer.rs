@@ -365,12 +365,11 @@ fn process_packet_block(block: &str, file: &mut File, io: &dyn IoHandler) {
         Regex::new(r"(\d{2}:\d{2}:\d{2}\.\d+)\sIP\s([\w\.-]+)\s>\s([\w\.-]+):\s(.*)").unwrap()
     });
 
-    let lines: Vec<&str> = block.lines().collect();
-    if lines.is_empty() {
-        return;
-    }
-
-    let header = lines[0];
+    let mut lines = block.lines();
+    let header = match lines.next() {
+        Some(h) => h,
+        None => return,
+    };
 
     if let Some(caps) = re_header.captures(header) {
         let time = &caps[1];
@@ -378,12 +377,14 @@ fn process_packet_block(block: &str, file: &mut File, io: &dyn IoHandler) {
         let dst = &caps[3];
         let flags = &caps[4];
 
-        let payload: String = lines
-            .iter()
-            .skip(1)
-            .cloned()
-            .collect::<Vec<&str>>()
-            .join("\n");
+        let mut payload = String::with_capacity(block.len().saturating_sub(header.len()));
+        for (i, line) in lines.enumerate() {
+            if i > 0 {
+                payload.push('\n');
+            }
+            payload.push_str(line);
+        }
+
         let content_type = detect_protocol(flags, &payload);
         let clean_payload = extract_readable(&payload);
 
