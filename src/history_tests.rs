@@ -7,10 +7,6 @@ mod tests {
     use std::fs;
 
     // Helper to create a temporary file path
-    // We don't have uuid, but we can generate a random number if rand is available,
-    // or just use a fixed unique-ish name.
-    // Looking at Cargo.toml, we don't have rand.
-    // We can use std::time
     fn get_temp_file_path_simple(suffix: &str) -> String {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -83,5 +79,43 @@ mod tests {
         let out = io.get_output();
         // It should print something (header or "No history")
         assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn test_legacy_migration() {
+        let file_path = get_temp_file_path_simple("legacy");
+        let legacy_content = r#"[
+            {
+                "timestamp": "01/01/2024 00:00:00",
+                "mode": "OldMode",
+                "target": "OldTarget",
+                "status": "OldStatus"
+            }
+        ]"#;
+        fs::write(&file_path, legacy_content).unwrap();
+
+        // Load - should work
+        let loaded = load_history_from_file(&file_path).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].target, "OldTarget");
+
+        // Append - should trigger migration
+        let new_entry = HistoryEntry::new("NewMode", "NewTarget", "NewStatus");
+        append_history_to_file(&new_entry, &file_path).unwrap();
+
+        // Load again - should have 2 entries
+        let loaded_new = load_history_from_file(&file_path).unwrap();
+        assert_eq!(loaded_new.len(), 2);
+        assert_eq!(loaded_new[0].target, "OldTarget");
+        assert_eq!(loaded_new[1].target, "NewTarget");
+
+        // Verify file content is now JSONL (not starting with [)
+        let content = fs::read_to_string(&file_path).unwrap();
+        assert!(!content.trim_start().starts_with('['));
+        // It should have 2 lines (plus maybe newlines)
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 2);
+
+        let _ = fs::remove_file(&file_path);
     }
 }
