@@ -1,6 +1,7 @@
 use crate::executor::CommandExecutor;
 use crate::io_handler::{CapturingIoHandler, IoHandler};
 use chrono::Local;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -55,14 +56,14 @@ impl Job {
 }
 
 pub struct JobManager {
-    pub jobs: Arc<Mutex<Vec<Arc<Job>>>>,
+    pub jobs: Arc<Mutex<BTreeMap<usize, Arc<Job>>>>,
     next_id: Arc<Mutex<usize>>,
 }
 
 impl JobManager {
     pub fn new() -> Self {
         Self {
-            jobs: Arc::new(Mutex::new(Vec::new())),
+            jobs: Arc::new(Mutex::new(BTreeMap::new())),
             next_id: Arc::new(Mutex::new(1)),
         }
     }
@@ -87,7 +88,7 @@ impl JobManager {
 
         {
             let mut jobs_lock = self.jobs.lock().unwrap();
-            jobs_lock.push(job.clone());
+            jobs_lock.insert(id, job.clone());
         }
 
         let job_clone = job.clone();
@@ -115,12 +116,12 @@ impl JobManager {
     }
 
     pub fn list_jobs(&self) -> Vec<Arc<Job>> {
-        self.jobs.lock().unwrap().clone()
+        self.jobs.lock().unwrap().values().cloned().collect()
     }
 
     pub fn get_job(&self, id: usize) -> Option<Arc<Job>> {
         let jobs = self.jobs.lock().unwrap();
-        jobs.iter().find(|j| j.id == id).cloned()
+        jobs.get(&id).cloned()
     }
 
     pub fn stop_job(&self, id: usize) -> bool {
@@ -133,13 +134,11 @@ impl JobManager {
 
     pub fn delete_job(&self, id: usize) -> bool {
         let mut jobs = self.jobs.lock().unwrap();
-        if let Some(pos) = jobs.iter().position(|j| j.id == id) {
-            let job = jobs[pos].clone();
+        if let Some(job) = jobs.remove(&id) {
             // Ensure it's cancelled if running
             if job.is_running() {
                 job.cancel();
             }
-            jobs.remove(pos);
             return true;
         }
         false
